@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <style>
+    @keyframes energy {
+      0%, 100% { 
+        fill: #FFD700; 
+        filter: url(#glow);
+        opacity: 1;
+      }
+      50% { 
+        fill: #4B4B4B; 
+        filter: none;
+        opacity: 0.6;
+      }
+    }
+    .bolt {
+      animation: energy 2s ease-in-out infinite;
+      stroke: #000;
+      stroke-width: 2;
+      stroke-linejoin: round;
+    }
+  </style>
+  <!-- Lightning Bolt Path - Scaled to fill the 100x100 area -->
+  <path class="bolt" d="M65 5 L25 55 L45 55 L35 95 L75 45 L55 45 L65 5 Z" />
+</svg>

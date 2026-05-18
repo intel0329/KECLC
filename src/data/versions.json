@@ -1,0 +1,170 @@
+[
+    {
+        "date": "2026-05-18",
+        "title": "대시보드 자가 치유(Self-Healing) 이중 강화 및 계통 고스트 락(Ghost-Lock) 결함 해결",
+        "changes": [
+            "2중 자가 치유(Self-Healing) 방어막 구축: usePanelLookup.js 내 childToParentMap 및 usedIds(사용 중 마킹) 등록 시 대시보드(panel-feeder, transformer-main) 관련 오염 데이터가 있을 경우 자동으로 무시 및 치유하도록 .includes() 기반 이중 차단막 적용",
+            "기존 패널 검색 고스트 락(Ghost Lock) 결함 해결: 연결 해제된 구버전 패널들이 DB 내 쓰레기 데이터로 인해 '사용 중(usedIds)'으로 잘못 판정되어 드롭다운 검색 목록에서 숨겨지던 사각지대를 완전히 해소하여 원상 복구",
+            "드롭다운 필터링 강화: 단일 계산서 복원 부작용으로 분전반 드롭다운에 '발전기 용량 계산서(generator)'와 'TRAY 계산서(tray)'가 노출되던 문제를 setPanels 필터 레벨에서 완벽 차단 (단, 내부 번역용 맵 원형은 철저히 유지)",
+            "DB 및 상태 무결성 강화: MariaDB 내 panel_connections 테이블 오염 데이터 정화 완료 및 변압기 모듈 내 currentConnections[id] Zustand 상태 정리 로직 정상 반영 검증",
+            "시스템 마스터 설계서 최신화: PROJECT_MASTER_GUIDE.md에 '대시보드 자가 치유 원칙', '조건부 사용 중 마킹 규칙', '대시보드 명단 영구 제외 규칙' 공식 추가 수록",
+            "대시보드 모듈(갑지/간선) 무한 렌더링 에코 차단 및 제로-싱크 보존: lastSyncFingerprintRef를 활용한 값(Value) 기반 직렬화 비교 가드를 syncPanel useEffect 블록에 이식하여 다중 탭 오픈 시 발생하는 초록색 인디케이터 무한 핑퐁 및 CPU/네트워크 부하 완벽 해결",
+            "변압기 갑지-을지 용량 실시간 동기화(Reactivity) 완성: 을지 계산서에서 변압기 용량(mainCapacity)을 변경 시, 부모 갑지 계산서의 powerLoads 내 static bankCapacity 필드와 totalTransformerCapacity 계산 로직이 전역 Zustand 스토어(panelsData)로부터 최신 용량을 실시간 수신하여 실시간 무결하게 동기화 및 자동 저장되도록 리액티브 싱크 엔진 구축"
+        ]
+    },
+    {
+        "date": "2026-05-17",
+        "title": "변압기 및 저압수전 계산서 동기화(Zero-Sync) 레이스 컨디션 해결",
+        "changes": [
+            "계통도 연결 해제(Unregister) 동기화 오류 수정: 외부(DB)에서 불러온 연결 상태를 로컬 메모리에 병합(Spread Merge)하지 않고 완전 교체(Replace)하도록 수정하여 삭제된 연결 정보가 즉시 반영되도록 개선",
+            "변압기 등록(Register) 시 중복 방송(Race Condition) 차단: connectPanel 호출 직후 flushConnectionsNow를 통해 과거 상태(Stale State)가 담긴 두 번째 브로드캐스트가 전송되어 하위 탭 메모리를 오염시키던 결함 원천 차단",
+            "동기화 아키텍처 정밀화: 수동 계통 연결(DB 선행 업데이트 및 방송)과 Zustand 자동 저장 엔진이 충돌 없이 단일 방송 원칙을 고수하도록 로직 정립",
+            "시스템 마스터 설계서 갱신: PROJECT_MASTER_GUIDE.md에 Exact DB Merge Policy 및 Anti-Race Condition Guard 원칙 공식 명문화"
+        ]
+    },
+    {
+        "date": "2026-05-16",
+        "title": "변압기 갑지 계산서 순수 관찰자(Pure Observer) 아키텍처 전환",
+        "changes": [
+            "순수 관찰자(Pure Observer) 모드 구현: 변압기 갑지 계산서에서 하위 패널 데이터를 로컬 상태로 중복 저장하던 로직을 제거하고, 전역 계통도 기반 실시간 확장 렌더링으로 전환",
+            "심층 리액티브 룩업(Deep Reactive Lookup): 위치(Location), 상(Phase), 전압(Voltage), 실시간 부하량, 차단기 사양(AT/AF/kA), 부등률, 비고 등 전 필드를 SSOT(panelsData, results)로부터 실시간 조인(Join)",
+            "부등률(Diversity Factor) 리액티브화: 을지-계산서의 피더 리스트에 설정된 부등률을 실시간 참조하도록 개선하여 갑지와 을지 간 데이터 불일치 원천 차단",
+            "좀비 데이터 자동 세척(Sanitizer): 을지에서 삭제된 패널이나 연결 해제된 인프라가 갑지 대시보드에 남아있지 않도록 실시간 동기화 로직 강화",
+            "자동 프리로딩(Pre-loading) 엔진: 갑지 진입 시 연결된 하위 패널 데이터가 메모리에 없을 경우 자동으로 서버에서 로드하여 데이터 공백 현상 해결",
+            "수용률/부하량 렌더링 버그 수정: 실시간 데이터 부재 시 '0.00'으로 덮어씌워지던 폴백(Fallback) 로직을 개선하여 유효한 계산값이 항상 우선 표시되도록 수정",
+            "UI 보호 레이어 적용: 관찰자 행(Observer Row)에 대한 컨텍스트 메뉴 액션 및 개별 셀 편집을 Read-Only로 차단하여 데이터 정합성 보호"
+        ]
+    },
+    {
+        "date": "2026-05-15",
+        "title": "계통도 무결성 강화 및 UPS/저압수전반 데이터 동기화 최적화",
+        "changes": [
+            "하향식(Top-Down) 계통 등록 강제: SOURCE 필드 드롭다운 수동 연결을 차단하고 토스트 알림(유효하지 않은 연결)을 통해 부모-자식 계층 원칙 엄수",
+            "패널 이름 SSOT 강제 동기화: 하이드레이션 로직을 개선하여 프로젝트 트리의 최신 이름을 모든 계산서 모듈(Power, UPS, TR, LV, PL)에 실시간 강제 반영",
+            "UPS 기본 Phase 변경: 신규 생성 시 기본 상 설정을 3상4선(3Ø-4W)으로 변경하여 UI 일관성 확보",
+            "UPS/저압수전반 초기화 보강: 신규 생성 시 공사방법(E), 전선종류(FCV) 등이 간선-계산서에 자동 반영되도록 projectInfo 초기 상태 및 Fallback 구조 개선",
+            "PanelFeeder 순수 관찰자 모드 전환: 전역 계통도 직접 수정 로직을 제거하고, 실시간 Reactive Lookup을 통한 수동적 대시보드 구조 안정화",
+            "ReferenceError 및 식별자 충돌 해결: setRemoteData 임포트 누락 복구 및 usePanelLookup/useFeederData 간의 panels 변수명 중복 선언 수정",
+            "Zero-Sync 아키텍처 준수: Memory-First 기반의 데이터 할당으로 실시간 브로드캐스팅 및 크로스 탭 정합성 0.1초 내 보장"
+        ]
+    },
+    {
+        "date": "2026-05-14",
+        "title": "UPS 계산서 계층 구조 무결성 완성 및 Stale Data 역류 차단",
+        "changes": [
+            "재귀적 심층 로딩(Deep Recursive Hydration): UPS > 자식 > 손자로 이어지는 복잡한 계층 구조에서 모든 하위 패널을 자동 탐색하여 로드하는 재귀 로더 이식",
+            "Stale Data 역류 차단 가드: 하위 패널 데이터 로딩 지연 시, 부모가 들고 있던 과거 회로 스냅샷이 최신 데이터를 덮어쓰지 않도록 차단 가드 적용",
+            "메타데이터 격리 원칙: 부모 뱅크 정보(bankMain*)와 자식 부하 회로 정보(at/af 등)의 할당 로직을 분리하여 데이터 계층 간 오염 방지",
+            "동기화 필드 전수 확장: bankName, bankLocation, 차단기 메타데이터 등 10개 주요 필드를 동기화 비교 대상에 포함하여 무결성 확보",
+            "실시간 리액티브 룩업 보강: calculatedLoads 내의 실시간 이름 및 정보 조회 로직을 강화하여 0.1초 내 UI 동기화 보장"
+        ]
+    },
+    {
+        "date": "2026-05-13",
+        "title": "다중 계층 상별 부하 동기화 완성 및 Zero-Sync 아키텍처 정밀화",
+        "changes": [
+            "계층형 동기화(Hierarchical Sync): 말단-자식-UPS-상위 패널로 이어지는 4단계 계층 간 상별 부하 전파 결함 완벽 해결",
+            "Phase-to-Pole 정밀 매핑: 자식 패널의 상(Phase) 정보에 따른 극수(P) 자동 결정 로직 구현 (1Φ2W:2, 3Φ3W:3, 3Φ4W:4)",
+            "BUS 헤더 연동: 단상 패널의 BUS 바 헤더(L1~L3) 변경 시 상위 회로의 phaseLine 속성이 즉각 동기화되는 리액티브 브릿지 구축",
+            "Memory-First 추출 엔진: UPS 모듈의 회로 추출 시 Zustand results 스토어와 자식의 selectedPhaseLine을 최우선 참조하도록 개편",
+            "동기화 인디케이터(The Blue/Green Rule): 모든 상 변경 이벤트에 updateProjectInfo를 적용하여 탭 간 브로드캐스트 및 시각적 피드백 보장"
+        ]
+    },
+    {
+        "date": "2026-05-13",
+        "title": "동력 부하 KEC 로직 복구 및 계통 동기화 루프 결함 수정",
+        "changes": [
+            "동력-계산서(PowerLoad): 규약동작배율(δ) 및 순시특성배율(δ₂) 로직을 검증된 과거 백업 버전으로 복구",
+            "동력-계산서: 차단기 추천 실패 시 현재 정격(AT)을 폴백(Fallback)으로 사용하여 배율 조회 누락 방지",
+            "동기화 안정화: UPS 모듈의 계통도 동기화 중 발생하던 무한 루프(Maximum update depth) 해결 (isLocalChangeRef 가드 적용)",
+            "데이터 무결성: CB_DATA(차단기 데이터베이스) 필터링 시 공백 및 타입 미일치로 인한 조회 오류를 방지하도록 강화",
+            "설정 연동: MCC 및 TCC 설정 페이지의 실시간 변경 사항이 동력-계산서에 즉각 반영되도록 변수 참조 구조 확립"
+        ]
+    },
+    {
+        "date": "2026-05-13",
+        "title": "분전반 계산서 반응성 결함 수정 및 데이터 동기화 안정화",
+        "changes": [
+            "분전반 계산서(PanelLoad): 부하 추가 시 상태 업데이트가 지연되거나 무시되는 동기화 레이스 컨디션 해결",
+            "동기화 엔진 최적화: syncPLCircuits 함수를 함수형 업데이트(prev => ...) 패턴으로 전면 개편하여 데이터 유실 방지",
+            "UX 고도화: 부하 추가 시 회로 명칭(loadName)이 비어있으면 첫 번째 부하 명칭으로 자동 채움 로직 구현",
+            "안정성 강화: 회로 ID 비교 로직을 문자열 기반(String(id))으로 통합하여 타입 불일치로 인한 갱신 누락 차단"
+        ]
+    },
+    {
+        "date": "2026-05-08",
+        "title": "Zero-Sync 아키텍처 완성 및 전역 통신 표준화",
+        "changes": [
+            "전역 대청소: 레거시 이벤트 신호(kelc_data_update_signal) 및 불필요한 스토리지 리스너 전역 제거",
+            "설정 동기화 통합: KEC, MCC, TCC 설정을 Zustand 스토어로 통합하여 크로스 탭 실시간 동기화 구현",
+            "반응형 조회(Reactive Lookup): 모든 모듈의 기기 명칭 및 메타데이터 렌더링을 스토어 구독 방식으로 전면 전환",
+            "UI 최적화: 긴 프로젝트 이름 말줄임표(...) 처리 및 헤더 기기 명칭(BANK/PANEL) 색상 강조(노란색)",
+            "간선 계산서: 자식 판넬 데이터 동기화 로직을 Zustand 반응형 구독 패턴으로 현대화"
+        ]
+    },
+    {
+        "date": "2026-05-04",
+        "title": "계산서 UI/UX 고도화 및 UPS 모듈 안정화",
+        "changes": [
+            "간선/발전기 계산서: 시인성 개선 (FAIL 클릭 시 셀 이동, 버튼 애니메이션, 특정 항목 색상 강조)",
+            "UPS 계산서: UI 디자인 시스템 통일 (데이터 색상 #d1d5db 적용, 미사용 PDF 버튼 제거)",
+            "UPS 계산서: 분류(비상/정전) 체크박스 수동 제어 로직 구현 및 정전 우선 기본값 적용",
+            "UPS 계산서: 고질적인 recordHistory 참조 오류 해결 및 수동 분류 상태 유지 안정화",
+            "입력 자동화: 간선 계산서 공사방법 선택 시 트레이(TRAY) 자동 매핑 및 데이터 검증 로직 강화"
+        ]
+    },
+    {
+        "date": "2026-05-03",
+        "title": "Zero-Sync 계통 동기화 안정화 및 UI 하이드레이션 최적화",
+        "changes": [
+            "분전반(부모-자식) 간 메타데이터(차단기, 전선 규격 등) 실시간 동기화 결함 수정",
+            "Passive Sync 시 전역 스토어 업데이트 차단 가드 제거를 통한 탭 간 정합성 복구",
+            "UPS 계산서 스켈레톤 UI 무한 깜박임 현상 수정 (의존성 안정화 및 하이드레이션 가드 적용)",
+            "Zustand 선택적 구독(Selector) 패턴 적용을 통한 컴포넌트 렌더링 성능 최적화",
+            "동기화 발생 시 로컬 변경 플래그(isLocalChangeRef) 자동 활성화를 통한 데이터 저장 누락 방지"
+        ]
+    },
+    {
+        "date": "2026-04-29",
+        "title": "Zero-Sync 자식 패널 프리로드 및 데이터 무결성 완성",
+        "changes": [
+            "자식 패널 자동 프리로드(Auto-Preload) 로직 구현 (부모 페이지 진입 시 자식 데이터 자동 로드)",
+            "Zero-Sync VA 폴백 계산 로직 추가 (자식 페이지 미방문 시에도 원시 데이터 기반 부하 즉시 합산)",
+            "Heal & Protect 데이터 복구 엔진 이식 (비정상적 0VA Draft 발생 시 Origin 데이터 자동 복구)",
+            "자동 저장 및 Unmount Flush 시 cachedTotalLoad/cachedPhaseTotals 누락 버그 수정",
+            "Zero-Sync 진화 과정 및 아키텍처 비교 보고서(zero_sync_evolution_report.md) 작성"
+        ]
+    },
+    {
+        "date": "2026-04-28",
+        "title": "Zero-Sync 아키텍처 구축 및 실시간 반응성 강화",
+        "changes": [
+            "Zustand 기반 실시간 데이터 동기화 시스템 구축 (syncPanel, syncPLCircuits)",
+            "BroadcastChannel을 이용한 크로스 탭 데이터 즉시 전파 구현",
+            "localStorage 시그널 기반 React 컴포넌트 강제 리렌더링 트리거 적용",
+            "TCC 페이지 접근 시 부적절한 프로젝트 종료 팝업 발생 로직 수정",
+            "분전반, 동력부하, UPS 계산서 간의 하위 패널 부하 실시간 연동 정합성 확보",
+            "통합 동기화 마스터 가이드(KECLC 통합 동기화 마스터 가이드.md) 문서화 완료"
+        ]
+    },
+    {
+        "date": "2026-04-26",
+        "title": "CAD 추출 로직 고도화 및 정렬 개선",
+        "changes": [
+            "분전반 CAD 도면 내 좌우 차단기 정렬 로직 개선 (행 기반 동기화)",
+            "CAD 추출 시 'SOURCE' 필드 누락 현상 수정 (연결된 패널 이름 자동 매핑)",
+            "개별 계산서 내 'CAD' 추출 버튼 추가 및 데이터 정합성 강화",
+            "ProjectDashboard 및 LoadSummary 내 ReferenceError(getNameById) 수정"
+        ]
+    },
+    {
+        "date": "2026-04-25",
+        "title": "계산서 편입 기능 및 UI 편의성 개선",
+        "changes": [
+            "타 프로젝트 계산서 편입 기능 구현 (데이터 격리 및 복제 로직 적용)",
+            "계산서 목록 아이콘 크기 최적화 및 시인성 개선",
+            "프로젝트 검색 단축키(S) 입력 간섭 버그 수정",
+            "동력 간선 등 불필요한 레거시 계산서 항목 제거"
+        ]
+    }
+]
