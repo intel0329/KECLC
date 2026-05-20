@@ -229,6 +229,9 @@ const ProjectDashboard = () => {
 
         const result = await removePanelFromProject(projectId, deleteModal.parentId, deleteModal.targetItem.id);
         if (result) {
+            // [SYNC] 로컬 메모리 소멸 및 타 탭 전파 실행 (Option 3 Clean Deletion)
+            useDataStore.getState().deletePanelState(deleteModal.targetItem.id);
+
             await loadProject();
             window.dispatchEvent(new Event('kelc_project_info_updated'));
 
@@ -337,6 +340,11 @@ const ProjectDashboard = () => {
 
         const result = await removePanelsFromProject(projectId, panelItems);
         if (result) {
+            // [SYNC] 로컬 메모리 소멸 및 타 탭 전파 실행 (Option 3 Clean Deletion)
+            panelItems.forEach(item => {
+                useDataStore.getState().deletePanelState(item.panelId);
+            });
+
             await loadProject();
             window.dispatchEvent(new Event('kelc_project_info_updated'));
             

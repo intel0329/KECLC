@@ -140,6 +140,47 @@ const useDataStore = create((set, get) => {
                     window.location.href = '/'; // 강제 홈 이동
                 }
                 break;
+            case 'PANEL_DELETED': {
+                const { panelId } = payload;
+                console.log(`[SYNC] Panel deleted: ${panelId} from sender ${senderId}`);
+
+                // 1. 타 탭의 브라우저 로컬 캐시 즉시 제거
+                try {
+                    localStorage.removeItem(`kelc_panel_cache_${panelId}`);
+                } catch (e) {
+                    console.warn(`[SYNC] Failed to clear local cache for deleted panel ${panelId}:`, e);
+                }
+
+                // 2. Zustand 메모리 스토어 상태 청소
+                set(state => {
+                    const newPanels = { ...state.panels };
+                    delete newPanels[panelId];
+
+                    const newResults = { ...state.results };
+                    delete newResults[panelId];
+
+                    // connections 맵에서도 해당 childId(또는 parentId)와 연계된 관계 제거
+                    const newConnections = { ...state.panelConnections };
+                    delete newConnections[panelId];
+                    Object.keys(newConnections).forEach(k => {
+                        if (newConnections[k] === panelId) {
+                            delete newConnections[k];
+                        }
+                    });
+
+                    return { 
+                        panels: newPanels, 
+                        results: newResults,
+                        panelConnections: newConnections
+                    };
+                });
+
+                // 3. UI 및 리액티브 갱신을 위한 글로벌 이벤트 발송
+                window.dispatchEvent(new CustomEvent('kelc_connections_changed', { detail: { panelId } }));
+                window.dispatchEvent(new CustomEvent('kelc_panel_deleted', { detail: { panelId } }));
+                window.dispatchEvent(new Event('kelc_project_info_updated'));
+                break;
+            }
             case 'PROJECT_LIST_UPDATED':
                 console.log(`[SYNC] Project list update signal received from ${senderId}`);
                 // 리스트 갱신 트리거 증가 (ProjectList 컴포넌트 구독용)
@@ -581,6 +622,58 @@ const useDataStore = create((set, get) => {
             localStorage.removeItem('kelc_project_info');
             localStorage.removeItem('kelc_dirty_panels');
             localStorage.setItem('kelc_project_is_dirty', 'false');
+        },
+
+        /**
+         * [NEW] 계산서 삭제 시 본인 탭 상태 청소 및 타 탭 브로드캐스트 전파
+         */
+        deletePanelState: (panelId) => {
+            if (!panelId) return;
+
+            // 1. 본인 탭의 로컬 캐시 제거 (이미 projectService에서 지웠지만 안전장치로 추가 실행)
+            try {
+                localStorage.removeItem(`kelc_panel_cache_${panelId}`);
+            } catch (e) {}
+
+            // 2. Zustand 메모리 스토어 상태 제거
+            set(state => {
+                const newPanels = { ...state.panels };
+                delete newPanels[panelId];
+
+                const newResults = { ...state.results };
+                delete newResults[panelId];
+
+                const newConnections = { ...state.panelConnections };
+                delete newConnections[panelId];
+                Object.keys(newConnections).forEach(k => {
+                    if (newConnections[k] === panelId) {
+                        delete newConnections[k];
+                    }
+                });
+
+                return { 
+                    panels: newPanels, 
+                    results: newResults,
+                    panelConnections: newConnections
+                };
+            });
+
+            // 3. 글로벌 이벤트 발송 (로컬 UI 갱신용)
+            window.dispatchEvent(new CustomEvent('kelc_connections_changed', { detail: { panelId } }));
+            window.dispatchEvent(new CustomEvent('kelc_panel_deleted', { detail: { panelId } }));
+            window.dispatchEvent(new Event('kelc_project_info_updated'));
+
+            // 4. 타 탭으로 PANEL_DELETED 브로드캐스트 신호 발송
+            bc.postMessage({
+                type: 'PANEL_DELETED',
+                payload: { panelId },
+                senderId: TAB_ID
+            });
+
+            // [DEV RADAR Hook] 송신 패킷 로깅
+            window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                detail: { type: 'TX', action: 'PANEL_DELETED', panelId, senderId: 'LOCAL' }
+            }));
         },
 
         /**

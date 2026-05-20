@@ -90,56 +90,6 @@ export const logIntegrityEvent = (level, action, message, detail = null) => {
     }
 };
 
-/**
- * 복제 및 타 탭 동기화 시 발생할 수 있는 미세한 ID 타임스탬프/접미사 차이를 극복하는 유연한 ID 일치 판별기
- */
-const isIdMatch = (idA, idB) => {
-    if (!idA || !idB) return false;
-    const a = String(idA).trim();
-    const b = String(idB).trim();
-    if (a === b) return true;
-
-    // 접두사 제거 함수 (모든 유효한 계통 접두사 지원 - Prefix Wildcard)
-    const cleanId = (id) => {
-        return id.replace(/^(panel-load|power-load|ups|transformer-main|transformer|generator|panel-feeder)-/, '');
-    };
-
-    const cleanA = cleanId(a);
-    const cleanB = cleanId(b);
-
-    if (cleanA === cleanB) return true;
-
-    // 타임스탬프 및 인덱스/해시 기반 부분 매칭
-    const tsPattern = /\d{13}/;
-    const tsA = cleanA.match(tsPattern);
-    const tsB = cleanB.match(tsPattern);
-
-    if (tsA && tsB && tsA[0] === tsB[0]) {
-        const partsA = cleanA.split('-');
-        const partsB = cleanB.split('-');
-
-        // 복제 및 복구 시 끝자리 해시가 조금 다를 수 있으므로 핵심 해시 비교
-        const hashA = partsA[partsA.length - 1];
-        const hashB = partsB[partsB.length - 1];
-        if (hashA && hashB && (hashA === hashB || hashA.includes(hashB) || hashB.includes(hashA))) {
-            return true;
-        }
-
-        // 인덱스 마디 비교 (예: feeder index)
-        if (partsA.length >= 2 && partsB.length >= 2 && partsA[1] === partsB[1]) {
-            return true;
-        }
-    }
-
-    // 상호 포함 대조 (비교 문자열이 충분히 고유할 때)
-    if (cleanA.length > 5 && cleanB.length > 5) {
-        if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
-            return true;
-        }
-    }
-
-    return false;
-};
 
 /**
  * 부모 회로(connectedPanelId)에서 유효한 자식 계산서 ID를 판정하기 위한 검증 필터 (Prefix Wildcard 지원)
@@ -184,13 +134,13 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                     } catch (e) { }
                 }
 
-                // Tier 1-B: isIdMatch 기반 LocalStorage 키 유연 조회 (캐시 불일치 복구 보완)
+                // Tier 1-B: LocalStorage 키 엄격 조회 (Exact Match)
                 try {
                     for (let i = 0; i < localStorage.length; i++) {
                         const key = localStorage.key(i);
                         if (key && key.startsWith('kelc_panel_cache_')) {
                             const candidateId = key.replace('kelc_panel_cache_', '');
-                            if (isIdMatch(candidateId, panelId)) {
+                            if (String(candidateId).trim() === String(panelId).trim()) {
                                 const cachedVal = localStorage.getItem(key);
                                 if (cachedVal) {
                                     const parsed = JSON.parse(cachedVal);
@@ -201,11 +151,11 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                     }
                 } catch (e) { }
 
-                // Tier 2: Zustand 스토어 내 유연 매칭 조회
+                // Tier 2: Zustand 스토어 내 엄격 매칭 조회
                 try {
                     const storePanels = window.__KECLC_STORE_PANELS__;
                     if (storePanels) {
-                        const matchedId = Object.keys(storePanels).find(id => isIdMatch(id, panelId));
+                        const matchedId = Object.keys(storePanels).find(id => String(id).trim() === String(panelId).trim());
                         if (matchedId && storePanels[matchedId]) return storePanels[matchedId];
                     }
                 } catch (e) { }
@@ -293,8 +243,8 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
 
                     parentToChildLinks.forEach(link => {
                         const childId = link.childId;
-                        // isIdMatch 유연 룩업 적용 (ID 접미사 차이 방어)
-                        const childMeta = Object.values(panelMap).find(p => isIdMatch(p.id, childId));
+                        // 엄격 룩업 적용 (Exact Match)
+                        const childMeta = Object.values(panelMap).find(p => String(p.id).trim() === String(childId).trim());
 
                         // 에러 탐지 1: 실제 프로젝트 리스트에서 해당 자식 판넬 ID가 삭제되었거나 존재하지 않는 경우
                         if (!childMeta) {
@@ -311,8 +261,8 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                         if (childData) {
                             const childFromId = childData.projectInfo?.fromId;
 
-                            // 에러 탐지 2: 자식 패널의 부모 참조(fromId)가 끊어져 있거나 다른 부모로 지정된 경우 (isIdMatch 유연 검증)
-                            if (!childFromId || !isIdMatch(childFromId, panel.id)) {
+                            // 에러 탐지 2: 자식 패널의 부모 참조(fromId)가 끊어져 있거나 다른 부모로 지정된 경우 (엄격 검증)
+                            if (!childFromId || String(childFromId).trim() !== String(panel.id).trim()) {
                                 totalViolations++;
                                 logIntegrityEvent('ERR_INTEGRITY', 'CHECK',
                                     `연결 단선(Dangling Link) 발견: 부모[${panel.name}]는 자식[${childMeta.name}]을 참조하나, 자식의 FROM이 비어있거나 다릅니다.`,
@@ -333,8 +283,8 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                 // B. 자식 계산서 입장에서의 역방향 검증 (자식 -> 부모 링크)
                 const fromId = panelData.projectInfo?.fromId;
                 if (fromId) {
-                    // isIdMatch 유연 룩업 적용
-                    const parentMeta = Object.values(panelMap).find(p => isIdMatch(p.id, fromId));
+                    // 엄격 룩업 적용 (Exact Match)
+                    const parentMeta = Object.values(panelMap).find(p => String(p.id).trim() === String(fromId).trim());
 
                     // 에러 탐지 3: 자식이 가리키는 부모 패널 ID가 프로젝트 내에 존재하지 않는 경우
                     if (!parentMeta) {
@@ -355,13 +305,13 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                                 if (Array.isArray(parentData[side])) {
                                     parentData[side].forEach(circuit => {
                                         // 1. 단일 회로 레벨의 connectedPanelId 비교
-                                        if (circuit.connectedPanelId && isValidChildId(circuit.connectedPanelId) && isIdMatch(circuit.connectedPanelId, panel.id)) {
+                                        if (circuit.connectedPanelId && isValidChildId(circuit.connectedPanelId) && String(circuit.connectedPanelId).trim() === String(panel.id).trim()) {
                                             parentHasReference = true;
                                         }
                                         // 2. 회로 내 중첩 부하(Nested Loads) 내 connectedPanelId 딥스캔
                                         if (Array.isArray(circuit.loads)) {
                                             circuit.loads.forEach(nestedLoad => {
-                                                if (nestedLoad.connectedPanelId && isValidChildId(nestedLoad.connectedPanelId) && isIdMatch(nestedLoad.connectedPanelId, panel.id)) {
+                                                if (nestedLoad.connectedPanelId && isValidChildId(nestedLoad.connectedPanelId) && String(nestedLoad.connectedPanelId).trim() === String(panel.id).trim()) {
                                                     parentHasReference = true;
                                                 }
                                             });
@@ -372,11 +322,11 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
 
                             if (Array.isArray(parentData.powerLoads)) {
                                 parentData.powerLoads.forEach(load => {
-                                    if (load.connectedPanelId && isValidChildId(load.connectedPanelId) && isIdMatch(load.connectedPanelId, panel.id)) {
+                                    if (load.connectedPanelId && isValidChildId(load.connectedPanelId) && String(load.connectedPanelId).trim() === String(panel.id).trim()) {
                                         parentHasReference = true;
                                     }
                                     // 부모가 ups 타입이고 load.bankId가 매치되는 경우도 교차 검증 인정
-                                    if (parentMeta.type === 'ups' && load.bankId && isValidChildId(load.bankId) && isIdMatch(load.bankId, panel.id)) {
+                                    if (parentMeta.type === 'ups' && load.bankId && isValidChildId(load.bankId) && String(load.bankId).trim() === String(panel.id).trim()) {
                                         parentHasReference = true;
                                     }
                                 });

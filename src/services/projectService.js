@@ -460,6 +460,13 @@ export const removePanelFromProject = async (projectId, calculatorType, panelId)
         await apiCall(`${API_PROJECT_DATA}?key_name=${key}`, 'DELETE');
     }
 
+    // 1-A. Remove browser local storage cache to prevent orphaned zombie panels
+    try {
+        localStorage.removeItem(`kelc_panel_cache_${panelId}`);
+    } catch (e) {
+        console.warn(`[Cleanup] Failed to remove local cache for panel ${panelId}:`, e);
+    }
+
     // 2. Update structure
     calculator.children = calculator.children.filter(p => p.id !== panelId);
 
@@ -489,6 +496,13 @@ export const removePanelsFromProject = async (projectId, panelItems) => {
             } catch (err) {
                 console.warn(`Failed to delete data for ${panelId}:`, err);
             }
+        }
+
+        // 1-A. Remove browser local storage cache to prevent orphaned zombie panels
+        try {
+            localStorage.removeItem(`kelc_panel_cache_${panelId}`);
+        } catch (e) {
+            console.warn(`[Cleanup] Failed to remove local cache for panel ${panelId}:`, e);
         }
 
         // 2. Update structure in memory

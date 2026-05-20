@@ -499,6 +499,9 @@ const CalculatorTreeDrawer = ({ isOpen, onClose, projectName, projectId, checkDi
 
         const result = await removePanelFromProject(activeProjectId, deleteModal.parentId, deleteModal.targetItem.id);
         if (result) {
+            // [SYNC] 로컬 메모리 소멸 및 타 탭 전파 실행 (Option 3 Clean Deletion)
+            useDataStore.getState().deletePanelState(deleteModal.targetItem.id);
+
             // If currently viewing the deleted panel
             if (location.pathname.includes(`/panel-load/${deleteModal.targetItem.id}`)) {
                 if (nextPanelId) {
@@ -511,6 +514,9 @@ const CalculatorTreeDrawer = ({ isOpen, onClose, projectName, projectId, checkDi
             await loadProjectData(activeProjectId);
             window.dispatchEvent(new Event('kelc_project_info_updated'));
             window.dispatchEvent(new Event('kelc_project_deleted'));
+
+            // [SYNC] 리스트의 계산서 개수 등 정보 갱신 전파
+            useDataStore.getState().broadcastListUpdate();
         }
         setDeleteModal({ isOpen: false, targetItem: null, parentId: null });
     };
@@ -608,9 +614,17 @@ const CalculatorTreeDrawer = ({ isOpen, onClose, projectName, projectId, checkDi
 
         const result = await removePanelsFromProject(activeProjectId, panelItems);
         if (result) {
+            // [SYNC] 로컬 메모리 소멸 및 타 탭 전파 실행 (Option 3 Clean Deletion)
+            panelItems.forEach(item => {
+                useDataStore.getState().deletePanelState(item.panelId);
+            });
+
             await loadProjectData(activeProjectId);
             window.dispatchEvent(new Event('kelc_project_info_updated'));
             window.dispatchEvent(new Event('kelc_project_deleted'));
+
+            // [SYNC] 리스트의 계산서 개수 등 정보 갱신 전파
+            useDataStore.getState().broadcastListUpdate();
         }
         
         setMultiDeleteModal({ isOpen: false, itemIds: [] });
