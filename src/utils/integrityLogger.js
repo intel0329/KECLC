@@ -240,11 +240,24 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                         sides.forEach(side => {
                             if (Array.isArray(panelData[side])) {
                                 panelData[side].forEach((circuit, index) => {
+                                    // 1. 단일 회로 레벨의 connectedPanelId 스캔
                                     if (circuit.connectedPanelId && isValidChildId(circuit.connectedPanelId)) {
                                         links.push({
                                             childId: circuit.connectedPanelId,
                                             circuitName: circuit.loadName || `회로 #${index + 1}`,
                                             side: side === 'leftCircuits' ? '좌측' : '우측'
+                                        });
+                                    }
+                                    // 2. 회로 내 중첩 부하(Nested Loads) 딥스캔
+                                    if (Array.isArray(circuit.loads)) {
+                                        circuit.loads.forEach((nestedLoad) => {
+                                            if (nestedLoad.connectedPanelId && isValidChildId(nestedLoad.connectedPanelId)) {
+                                                links.push({
+                                                    childId: nestedLoad.connectedPanelId,
+                                                    circuitName: nestedLoad.loadName || circuit.loadName || `중첩회로 #${index + 1}`,
+                                                    side: side === 'leftCircuits' ? '좌측' : '우측'
+                                                });
+                                            }
                                         });
                                     }
                                 });
@@ -341,8 +354,17 @@ export const checkProjectIntegrityAsync = (projectId, allExtractedPanels) => {
                             sides.forEach(side => {
                                 if (Array.isArray(parentData[side])) {
                                     parentData[side].forEach(circuit => {
+                                        // 1. 단일 회로 레벨의 connectedPanelId 비교
                                         if (circuit.connectedPanelId && isValidChildId(circuit.connectedPanelId) && isIdMatch(circuit.connectedPanelId, panel.id)) {
                                             parentHasReference = true;
+                                        }
+                                        // 2. 회로 내 중첩 부하(Nested Loads) 내 connectedPanelId 딥스캔
+                                        if (Array.isArray(circuit.loads)) {
+                                            circuit.loads.forEach(nestedLoad => {
+                                                if (nestedLoad.connectedPanelId && isValidChildId(nestedLoad.connectedPanelId) && isIdMatch(nestedLoad.connectedPanelId, panel.id)) {
+                                                    parentHasReference = true;
+                                                }
+                                            });
                                         }
                                     });
                                 }
