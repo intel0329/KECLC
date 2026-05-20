@@ -60,6 +60,19 @@ export const LoadSummary = (props) => {
         projectId
     } = props;
 
+    // 수용률(Demand Factor)에 다른 이중 계산 방지용 원시 부하(Raw Total Load) 및 원시 상 부하(Raw Phase Load) 연산
+    // 만약 phaseTotals에 raw 변수가 전달되면 그것을 최우선 SSOT로 사용하고, 없으면 기존 역산 방식을 fallback으로 둡니다.
+    const rawTotalLoad = phaseTotals.rawL1 !== undefined 
+        ? (phaseTotals.rawL1 + phaseTotals.rawL2 + phaseTotals.rawL3) 
+        : (totalLoad / (((Number(projectInfo.demandFactor) || 100)) / 100));
+    const rawTotalCurrent = rawTotalLoad / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220);
+    const rawPhaseLoad = phaseTotals.rawMaxPhaseLoad !== undefined 
+        ? phaseTotals.rawMaxPhaseLoad 
+        : (phaseLoad / (((Number(projectInfo.demandFactor) || 100)) / 100));
+    const rawMaxCurrent = phaseTotals.rawMaxCurrent !== undefined 
+        ? phaseTotals.rawMaxCurrent 
+        : (phaseTotals.maxCurrent / (((Number(projectInfo.demandFactor) || 100)) / 100));
+
     return (
         <div className="grid grid-cols-12 gap-4 mb-4">
             <div className="col-span-12 border border-gray-900 bg-black p-4 relative">
@@ -194,22 +207,22 @@ export const LoadSummary = (props) => {
                     </div>
                     <div className="bg-gray-900/30 p-4 min-h-[100px]">
                         <div className="text-gray-300 text-[10px] uppercase tracking-widest mb-1">Total Load</div>
-                        <div className="text-2xl font-bold text-blue-400">{totalLoad.toLocaleString()}<span className="text-[12px] text-gray-400 ml-1">VA</span></div>
+                        <div className="text-2xl font-bold text-blue-400">{Math.round(rawTotalLoad).toLocaleString()}<span className="text-[12px] text-gray-400 ml-1">VA</span></div>
                     </div>
                     <div className="bg-gray-900/30 p-4 min-h-[100px]">
                         <div className="text-gray-300 text-[10px] uppercase tracking-widest mb-1">Total Current</div>
                         <div className="text-2xl font-bold text-blue-400">
-                            {(totalLoad / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220)).toFixed(1)}
+                            {Math.round(rawTotalCurrent).toLocaleString()}
                             <span className="text-[12px] text-gray-400 ml-1">A</span>
                         </div>
                     </div>
                     <div className="bg-gray-900/30 p-4 min-h-[100px]">
                         <div className="text-gray-300 text-[10px] uppercase tracking-widest mb-1">Max Phase Load</div>
-                        <div className="text-2xl font-bold text-white">{Math.floor(phaseLoad).toLocaleString()}<span className="text-[12px] text-gray-400 ml-1">VA</span></div>
+                        <div className="text-2xl font-bold text-white">{Math.floor(rawPhaseLoad).toLocaleString()}<span className="text-[12px] text-gray-400 ml-1">VA</span></div>
                     </div>
                     <div className="bg-gray-900/30 p-4 min-h-[100px]">
                         <div className="text-gray-300 text-[10px] uppercase tracking-widest mb-1">Max Phase Current</div>
-                        <div className="text-2xl font-bold text-white">{phaseTotals.maxCurrent.toFixed(1)}<span className="text-[12px] text-gray-400 ml-1">A</span></div>
+                        <div className="text-2xl font-bold text-white">{Math.round(rawMaxCurrent).toLocaleString()}<span className="text-[12px] text-gray-400 ml-1">A</span></div>
                         <div className="text-[10px] text-gray-400 mt-1">Based on 1-Phase</div>
                     </div>
                 </div>
@@ -259,23 +272,18 @@ export const LoadSummary = (props) => {
                     <div className="bg-gray-900/30 p-4 min-h-[100px]">
                         <div className="text-gray-300 text-[10px] uppercase tracking-widest mb-1">Demand Factor</div>
                         <div className="text-2xl font-bold text-yellow-400 flex items-baseline">
-                            <SummaryInput
-                                value={projectInfo.demandFactor ?? 100}
-                                onSave={(val) => {
-                                    const num = parseInt(val, 10);
-                                    updateProjectInfo('demandFactor', isNaN(num) ? 0 : Math.min(999, num));
-                                }}
-                                className="bg-transparent border-none text-yellow-400 font-bold text-2xl outline-none text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none p-0"
-                            />
+                            <span className="bg-transparent border-none text-yellow-400 font-bold text-2xl outline-none text-right">
+                                {projectInfo.demandFactor ?? 100}
+                            </span>
                             <span className="text-[12px] text-gray-400 ml-1">%</span>
                         </div>
                         <div className="text-[14px] font-bold text-blue-400 mt-1 flex items-baseline gap-3 flex-wrap">
                             <span>
-                                {((totalLoad / 1000) * (projectInfo.demandFactor / 100)).toFixed(2)}
+                                {((rawTotalLoad * (Number(projectInfo.demandFactor ?? 100) / 100)) / 1000).toFixed(2)}
                                 <span className="text-[12px] text-gray-400 ml-0.5 font-normal">kVA</span>
                             </span>
                             <span>
-                                {((totalLoad / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220)) * (projectInfo.demandFactor / 100)).toFixed(2)}
+                                {((rawTotalLoad * (Number(projectInfo.demandFactor ?? 100) / 100)) / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220)).toFixed(2)}
                                 <span className="text-[12px] text-gray-400 ml-0.5 font-normal">A</span>
                             </span>
                         </div>

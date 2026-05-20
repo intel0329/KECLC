@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getProject, getPanelConnections } from '../services/projectService';
 import useDataStore from '../store/useDataStore';
+import { checkProjectIntegrityAsync } from '../utils/integrityLogger';
 
 /**
  * 프로젝트 내 모든 패널의 ID↔이름 조회 훅
@@ -31,6 +32,7 @@ export const usePanelLookup = (projectId) => {
     const [globalUsedPanelIds, setGlobalUsedPanelIds] = useState(new Set()); // 전역으로 연결된(자식으로 등록된) 패널 ID 집합
     const [enabledCalculators, setEnabledCalculators] = useState(new Set()); // 활성화된 계산서 ID 집합
     const [isLoaded, setIsLoaded] = useState(false);
+    const integrityTimerRef = useRef(null);
 
     // [SoT Sync] 타 탭에서 패널 이름/구조 변경 시 즉시 갱신
     const lastRefreshTimeRef = useRef(0);
@@ -169,6 +171,15 @@ export const usePanelLookup = (projectId) => {
             }
             setEnabledCalculators(enabledSet);
 
+            // [SYSTEM INTEGRITY] 백그라운드 무결성 비동기 진단 트리거 (3초 Debounce)
+            if (integrityTimerRef.current) {
+                clearTimeout(integrityTimerRef.current);
+            }
+            integrityTimerRef.current = setTimeout(() => {
+                checkProjectIntegrityAsync(projectId, extractedPanels);
+                integrityTimerRef.current = null;
+            }, 3000);
+
             setIsLoaded(true);
         } catch (e) {
             console.error('usePanelLookup: Failed to load project data', e);
@@ -239,6 +250,9 @@ export const usePanelLookup = (projectId) => {
             window.removeEventListener('kelc_panel_name_updated', handleUpdate);
             window.removeEventListener('kelc_connections_changed', handleConnectionsChanged);
             window.removeEventListener('storage', handleUpdate);
+            if (integrityTimerRef.current) {
+                clearTimeout(integrityTimerRef.current);
+            }
         };
     }, [loadData]);
 

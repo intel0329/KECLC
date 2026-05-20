@@ -23,6 +23,10 @@ const backupToLocal = (panelId, data) => {
             cachedAt: new Date().toISOString() 
         }));
     } catch (e) {
+        // [DEV RADAR Hook] Quota Exceeded WARN 패킷 도청
+        window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+            detail: { type: 'WARN', action: 'QUOTA_EXCEEDED', panelId, senderId: 'LOCAL' }
+        }));
         if (e.name === 'QuotaExceededError' || e.code === 22) {
             console.warn(`LocalStorage quota exceeded. Performing emergency cleanup...`);
             // Emergency Cleanup: Delete all panel caches EXCEPT the current one
@@ -55,6 +59,11 @@ const useDataStore = create((set, get) => {
 
         // [SESSION GUARD] 프로젝트 ID가 일치하지 않는 상태에서 메시지가 오면 
         // 데이터 정합성 보호를 위해 강제 종료 시나리오 실행 검토
+
+        // [DEV RADAR Hook] 수신 패킷 도청
+        window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+            detail: { type: 'RX', action: type, panelId: payload?.panelId, senderId: senderId?.slice(-4) }
+        }));
 
         switch (type) {
             case 'UPDATE_PANEL': {
@@ -341,6 +350,11 @@ const useDataStore = create((set, get) => {
                 }
             }, 1000);
 
+            // [DEV RADAR Hook] 송신 패킷 도청
+            window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                detail: { type: 'TX', action: 'UPDATE_PANEL', panelId, senderId: 'LOCAL' }
+            }));
+
             // 창 간 실시간 데이터 공유
             const updatedData = get().panels[panelId];
             bc.postMessage({ 
@@ -393,6 +407,11 @@ const useDataStore = create((set, get) => {
                 }
             }, 1000);
 
+            // [DEV RADAR Hook] 송신 패킷 도청
+            window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                detail: { type: 'TX', action: 'UPDATE_PANEL', panelId, senderId: 'LOCAL' }
+            }));
+
             // [ZERO SYNC] 전파 시 TAB_ID 포함 및 신호 발송
             bc.postMessage({ 
                 type: 'UPDATE_PANEL', 
@@ -401,6 +420,11 @@ const useDataStore = create((set, get) => {
             });
             
             if (result) {
+                // [DEV RADAR Hook] 송신 패킷 도청
+                window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                    detail: { type: 'TX', action: 'UPDATE_RESULTS', panelId, senderId: 'LOCAL' }
+                }));
+
                 bc.postMessage({ 
                     type: 'UPDATE_RESULTS', 
                     payload: { panelId, result },
@@ -458,12 +482,20 @@ const useDataStore = create((set, get) => {
                     })
                     .catch(e => {
                         console.error("Background save failed:", e);
+                        // [DEV RADAR Hook] 서버 저장 실패 WARN 도청
+                        window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                            detail: { type: 'WARN', action: 'SAVE_FAILED', panelId, senderId: 'SERVER' }
+                        }));
                         set(state => ({ syncStatus: { ...state.syncStatus, remote: 'error' } }));
                     });
                 
                 return true;
             } catch (e) {
                 console.error(`Failed to save panel ${panelId}:`, e);
+                // [DEV RADAR Hook] 서버 저장 예외 WARN 도청
+                window.dispatchEvent(new CustomEvent('kelc_dev_radar_log', {
+                    detail: { type: 'WARN', action: 'SAVE_EXCEPTION', panelId, senderId: 'SERVER' }
+                }));
                 return false;
             }
         },

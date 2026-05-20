@@ -944,27 +944,47 @@ export const CircuitTable = (props) => {
                                 </React.Fragment>
                             );
                         })}
-                        {/* Phase Load Summary */}
-                        <tr className="bg-gray-900/30 font-bold border-t-2 border-blue-500/20">
+                        {/* Phase Raw Load Summary (수용률 미적용 순수 설비 합계) - UI 표시 전용, 계산 로직 무관 */}
+                        <tr className="bg-black font-bold border-t-2 border-blue-500/20">
                             <td colSpan={16} className="border-r border-gray-900 p-2"></td>
-                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-white">
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-[#d1d5db]">
+                                {projectInfo.phase === '1Ø-2W'
+                                    ? (selectedPhaseLine === 'L1' ? Math.round(phaseTotals.rawL1 || 0).toLocaleString() : '')
+                                    : Math.round(phaseTotals.rawL1 || 0).toLocaleString()}
+                            </td>
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-[#d1d5db]">
+                                {projectInfo.phase === '1Ø-2W'
+                                    ? (selectedPhaseLine === 'L2' ? Math.round(phaseTotals.rawL2 || 0).toLocaleString() : '')
+                                    : Math.round(phaseTotals.rawL2 || 0).toLocaleString()}
+                            </td>
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-[#d1d5db]">
+                                {projectInfo.phase === '1Ø-2W'
+                                    ? (selectedPhaseLine === 'L3' ? Math.round(phaseTotals.rawL3 || 0).toLocaleString() : '')
+                                    : Math.round(phaseTotals.rawL3 || 0).toLocaleString()}
+                            </td>
+                            <td colSpan={16} className="border-r border-gray-900 p-2"></td>
+                        </tr>
+                        {/* Phase Load Summary (수용률 적용 합계) */}
+                        <tr className="bg-black font-bold border-t border-gray-800">
+                            <td colSpan={16} className="border-r border-gray-900 p-2"></td>
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-blue-400">
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L1' ? Math.round(phaseTotals.l1).toLocaleString() : '')
                                     : Math.round(phaseTotals.l1).toLocaleString()}
                             </td>
-                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-white">
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-blue-400">
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L2' ? Math.round(phaseTotals.l2).toLocaleString() : '')
                                     : Math.round(phaseTotals.l2).toLocaleString()}
                             </td>
-                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-white">
+                            <td className="border-r border-gray-900 p-2 text-center text-[11px] text-blue-400">
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L3' ? Math.round(phaseTotals.l3).toLocaleString() : '')
                                     : Math.round(phaseTotals.l3).toLocaleString()}
                             </td>
                             <td colSpan={16} className="border-r border-gray-900 p-2"></td>
                         </tr>
-                        <tr className="bg-gray-900/30 font-bold border-b-2 border-blue-500/20">
+                        <tr className="bg-black font-bold border-b-2 border-blue-500/20">
                             <td colSpan={16} className="border-r border-gray-900 p-2"></td>
                             <td className={`border-r border-gray-900 p-2 text-center text-[11px] ${imbalanceColor}`}>
                                 {projectInfo.phase === '1Ø-2W'

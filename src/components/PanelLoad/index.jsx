@@ -23,6 +23,7 @@ import { ProjectInfoBar } from './sections/ProjectInfoBar';
 import { LoadSummary } from './sections/LoadSummary';
 import { ActionModals } from './sections/ActionModals';
 import { CircuitTable } from './sections/CircuitTable';
+import DemandManager from './Demand/DemandManager';
 
 // Derive unique breaker types from CB_DATA
 const BREAKER_TYPES = [...new Set(
@@ -49,6 +50,7 @@ const PanelLoadContent = () => {
     
     // [NEW] 레프 및 상태 선언 (상단 이동)
     const lastSavedDataRef = useRef(null); // [GUARD] Server sync guard
+    const lastSyncFingerprintRef = useRef(''); // [GUARD] Zustand Sync Fingerprint Guard
     const latestDataRef = useRef(null);
     const lastSyncedNameRef = useRef({ project: '', panel: '' });
     const [isReadyToCheck, setIsReadyToCheck] = useState(false);
@@ -344,10 +346,14 @@ const PanelLoadContent = () => {
 
     // [Zero-Sync] Recursive Reactive Phase Calculation
     const getAggregateTotals = useCallback((id, visited = new Set()) => {
-        if (!id || visited.has(id)) return { l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0 };
+        if (!id || visited.has(id)) return { 
+            l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0,
+            rawL1: 0, rawL2: 0, rawL3: 0, rawI1: 0, rawI2: 0, rawI3: 0
+        };
         visited.add(id);
 
         let l1 = 0, l2 = 0, l3 = 0, i1 = 0, i2 = 0, i3 = 0;
+        let rawL1 = 0, rawL2 = 0, rawL3 = 0, rawI1 = 0, rawI2 = 0, rawI3 = 0;
         let targetCircuits = [];
         let pI = {};
 
@@ -365,12 +371,21 @@ const PanelLoadContent = () => {
                     l3: subResult.phaseTotals.l3 || 0,
                     i1: subResult.phaseTotals.i1 || 0,
                     i2: subResult.phaseTotals.i2 || 0,
-                    i3: subResult.phaseTotals.i3 || 0
+                    i3: subResult.phaseTotals.i3 || 0,
+                    rawL1: subResult.phaseTotals.rawL1 || subResult.phaseTotals.l1 || 0,
+                    rawL2: subResult.phaseTotals.rawL2 || subResult.phaseTotals.l2 || 0,
+                    rawL3: subResult.phaseTotals.rawL3 || subResult.phaseTotals.l3 || 0,
+                    rawI1: subResult.phaseTotals.rawI1 || subResult.phaseTotals.i1 || 0,
+                    rawI2: subResult.phaseTotals.rawI2 || subResult.phaseTotals.i2 || 0,
+                    rawI3: subResult.phaseTotals.rawI3 || subResult.phaseTotals.i3 || 0
                 };
             }
 
             const data = panelsData[id];
-            if (!data) return { l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0 };
+            if (!data) return { 
+                l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0,
+                rawL1: 0, rawL2: 0, rawL3: 0, rawI1: 0, rawI2: 0, rawI3: 0
+            };
 
             pI = data.projectInfo || {};
             // [Fallback] If no real-time result, use persisted cache from DB
@@ -381,7 +396,13 @@ const PanelLoadContent = () => {
                     l3: pI.cachedPhaseTotals.l3 || 0,
                     i1: pI.cachedPhaseTotals.i1 || 0,
                     i2: pI.cachedPhaseTotals.i2 || 0,
-                    i3: pI.cachedPhaseTotals.i3 || 0
+                    i3: pI.cachedPhaseTotals.i3 || 0,
+                    rawL1: pI.cachedPhaseTotals.rawL1 || pI.cachedPhaseTotals.l1 || 0,
+                    rawL2: pI.cachedPhaseTotals.rawL2 || pI.cachedPhaseTotals.l2 || 0,
+                    rawL3: pI.cachedPhaseTotals.rawL3 || pI.cachedPhaseTotals.l3 || 0,
+                    rawI1: pI.cachedPhaseTotals.rawI1 || pI.cachedPhaseTotals.i1 || 0,
+                    rawI2: pI.cachedPhaseTotals.rawI2 || pI.cachedPhaseTotals.i2 || 0,
+                    rawI3: pI.cachedPhaseTotals.rawI3 || pI.cachedPhaseTotals.i3 || 0
                 };
             }
 
@@ -396,68 +417,119 @@ const PanelLoadContent = () => {
 
         const isSinglePhase = normalizePhase(pI.phase).includes('1Φ2W') || normalizePhase(pI.phase).includes('1Ø-2W');
         const selPhase = pI.selectedPhaseLine || 'L1';
-        const demandFactor = (Number(pI.demandFactor) || 100) / 100;
+        const globalDf = (Number(pI.demandFactor) || 100) / 100;
 
         targetCircuits.forEach(c => {
             const cleanNum = (val) => Number(String(val || '').replace(/,/g, '')) || 0;
-            let pwr = cleanNum(c.power) || cleanNum(c.va) || cleanNum(c.apparentPower);
-            if (!pwr && c.effectivePower) {
+            
+            // 1. Raw Connected Power (설비용량)
+            let rawPwr = cleanNum(c.power) || cleanNum(c.va) || cleanNum(c.apparentPower);
+            if (!rawPwr && c.effectivePower) {
                 const pf = cleanNum(c.powerFactor) || 0.8;
                 const eff = cleanNum(c.efficiency) || 1.0;
-                pwr = (cleanNum(c.effectivePower) * 1000) / (pf * eff);
+                rawPwr = (cleanNum(c.effectivePower) * 1000) / (pf * eff);
+            }
+
+            // 2. Demanded Power (수용용량)
+            let demPwr = rawPwr;
+            if (c.connectedPanelId) {
+                // PL 부하는 하위 panelsData 계산값 그대로 활용 (하단 sub 취합에서 반영)
+            } else if (c.loads && c.loads.length > 0) {
+                // 상세 부하별 개별 수용률 개별 반영
+                demPwr = c.loads.reduce((sum, l) => sum + ((Number(l.qty) || 0) * (Number(l.va) || 0) * ((l.demandFactor === undefined ? 100 : Number(l.demandFactor)) / 100)), 0);
+            } else {
+                // 직접 입력 회로 개별 수용률 반영
+                demPwr = rawPwr * ((c.demandFactor === undefined ? 100 : Number(c.demandFactor)) / 100);
             }
             
             const pStr = String(c.p || c.phase || '4');
             const p = (pStr.includes('1Φ') || pStr.includes('1Ø') || pStr === '2') ? 2 : 4;
 
             if (isSinglePhase) {
-                const curr = pwr / 220;
-                if (selPhase === 'L1') { l1 += pwr; i1 += curr; }
-                else if (selPhase === 'L2') { l2 += pwr; i2 += curr; }
-                else if (selPhase === 'L3') { l3 += pwr; i3 += curr; }
+                const demCurr = demPwr / 220;
+                const rawCurr = rawPwr / 220;
+                if (selPhase === 'L1') { 
+                    l1 += demPwr; i1 += demCurr; 
+                    rawL1 += rawPwr; rawI1 += rawCurr;
+                } else if (selPhase === 'L2') { 
+                    l2 += demPwr; i2 += demCurr; 
+                    rawL2 += rawPwr; rawI2 += rawCurr;
+                } else if (selPhase === 'L3') { 
+                    l3 += demPwr; i3 += demCurr; 
+                    rawL3 += rawPwr; rawI3 += rawCurr;
+                }
             } else {
                 if (c.connectedPanelId) {
                     const sub = getAggregateTotals(c.connectedPanelId, visited);
                     if (p === 2) {
                         const totalSubPwr = sub.l1 + sub.l2 + sub.l3;
                         const totalSubCurr = totalSubPwr / 220;
+                        const totalSubRawPwr = sub.rawL1 + sub.rawL2 + sub.rawL3;
+                        const totalSubRawCurr = totalSubRawPwr / 220;
+
                         const pl = c.phaseLine || 'L1';
-                        if (pl === 'L1') { l1 += totalSubPwr; i1 += totalSubCurr; }
-                        else if (pl === 'L2') { l2 += totalSubPwr; i2 += totalSubCurr; }
-                        else if (pl === 'L3') { l3 += totalSubPwr; i3 += totalSubCurr; }
+                        if (pl === 'L1') { 
+                            l1 += totalSubPwr; i1 += totalSubCurr; 
+                            rawL1 += totalSubRawPwr; rawI1 += totalSubRawCurr;
+                        } else if (pl === 'L2') { 
+                            l2 += totalSubPwr; i2 += totalSubCurr; 
+                            rawL2 += totalSubRawPwr; rawI2 += totalSubRawCurr;
+                        } else if (pl === 'L3') { 
+                            l3 += totalSubPwr; i3 += totalSubCurr; 
+                            rawL3 += totalSubRawPwr; rawI3 += totalSubRawCurr;
+                        }
                     } else {
                         l1 += sub.l1; l2 += sub.l2; l3 += sub.l3;
                         i1 += sub.i1; i2 += sub.i2; i3 += sub.i3;
+                        rawL1 += sub.rawL1; rawL2 += sub.rawL2; rawL3 += sub.rawL3;
+                        rawI1 += sub.rawI1; rawI2 += sub.rawI2; rawI3 += sub.rawI3;
                     }
                 } else {
-                    const curr = p === 2 ? pwr / 220 : pwr / (380 * Math.sqrt(3));
+                    const demCurr = p === 2 ? demPwr / 220 : demPwr / (380 * Math.sqrt(3));
+                    const rawCurr = p === 2 ? rawPwr / 220 : rawPwr / (380 * Math.sqrt(3));
                     if (p === 2) {
                         const pl = c.phaseLine || 'L1';
-                        if (pl === 'L1') { l1 += pwr; i1 += curr; }
-                        else if (pl === 'L2') { l2 += pwr; i2 += curr; }
-                        else if (pl === 'L3') { l3 += pwr; i3 += curr; }
+                        if (pl === 'L1') { 
+                            l1 += demPwr; i1 += demCurr; 
+                            rawL1 += rawPwr; rawI1 += rawCurr;
+                        } else if (pl === 'L2') { 
+                            l2 += demPwr; i2 += demCurr; 
+                            rawL2 += rawPwr; rawI2 += rawCurr;
+                        } else if (pl === 'L3') { 
+                            l3 += demPwr; i3 += demCurr; 
+                            rawL3 += rawPwr; rawI3 += rawCurr;
+                        }
                     } else {
-                        const share = pwr / 3;
-                        l1 += share; l2 += share; l3 += share;
-                        i1 += curr; i2 += curr; i3 += curr;
+                        const demShare = demPwr / 3;
+                        const rawShare = rawPwr / 3;
+                        l1 += demShare; l2 += demShare; l3 += demShare;
+                        i1 += demCurr; i2 += demCurr; i3 += demCurr;
+                        rawL1 += rawShare; rawL2 += rawShare; rawL3 += rawShare;
+                        rawI1 += rawCurr; rawI2 += rawCurr; rawI3 += rawCurr;
                     }
                 }
             }
         });
 
         return {
-            l1: (Math.round(l1 * 10000) / 10000) * demandFactor,
-            l2: (Math.round(l2 * 10000) / 10000) * demandFactor,
-            l3: (Math.round(l3 * 10000) / 10000) * demandFactor,
-            i1: (Math.round(i1 * 10000) / 10000) * demandFactor,
-            i2: (Math.round(i2 * 10000) / 10000) * demandFactor,
-            i3: (Math.round(i3 * 10000) / 10000) * demandFactor
+            l1: Math.round(l1 * 10000) / 10000,
+            l2: Math.round(l2 * 10000) / 10000,
+            l3: Math.round(l3 * 10000) / 10000,
+            i1: Math.round(i1 * 10000) / 10000,
+            i2: Math.round(i2 * 10000) / 10000,
+            i3: Math.round(i3 * 10000) / 10000,
+            rawL1: Math.round(rawL1 * 10000) / 10000,
+            rawL2: Math.round(rawL2 * 10000) / 10000,
+            rawL3: Math.round(rawL3 * 10000) / 10000,
+            rawI1: Math.round(rawI1 * 10000) / 10000,
+            rawI2: Math.round(rawI2 * 10000) / 10000,
+            rawI3: Math.round(rawI3 * 10000) / 10000
         };
     }, [panelId, leftCircuits, rightCircuits, projectInfo, panelsData, results]);
 
     const phaseTotals = useMemo(() => {
         const result = getAggregateTotals(panelId);
-        const { l1, l2, l3, i1, i2, i3 } = result;
+        const { l1, l2, l3, i1, i2, i3, rawL1, rawL2, rawL3, rawI1, rawI2, rawI3 } = result;
         const maxVal = Math.max(l1, l2, l3);
         const maxCurr = Math.max(i1, i2, i3);
         const totalCurr = i1 + i2 + i3;
@@ -466,12 +538,17 @@ const PanelLoadContent = () => {
             l1, l2, l3, i1, i2, i3, 
             max: Math.round(maxVal * 10000) / 10000, 
             maxCurrent: Math.round(maxCurr * 10000) / 10000, 
-            totalCurrent: Math.round(totalCurr * 10000) / 10000 
+            totalCurrent: Math.round(totalCurr * 10000) / 10000,
+            rawL1, rawL2, rawL3,
+            rawMax: Math.round(Math.max(rawL1, rawL2, rawL3) * 10000) / 10000,
+            rawMaxPhaseLoad: Math.round(Math.max(rawL1, rawL2, rawL3) * 10000) / 10000,
+            rawMaxCurrent: Math.round(Math.max(rawI1, rawI2, rawI3) * 10000) / 10000,
+            rawI1, rawI2, rawI3
         };
     }, [panelId, getAggregateTotals]);
  
     const totalLoad = useMemo(() => {
-        const sum = (phaseTotals.l1 || 0) + (phaseTotals.l2 || 0) + (phaseTotals.l3 || 0);
+        const sum = (phaseTotals.rawL1 || 0) + (phaseTotals.rawL2 || 0) + (phaseTotals.rawL3 || 0);
         return Math.round(sum * 10000) / 10000;
     }, [phaseTotals]);
  
@@ -952,12 +1029,30 @@ const PanelLoadContent = () => {
                         branchDistance: remoteData.projectInfo.branchDistance || 15
                     };
 
-                    const vaDiffers = plLoad.va !== newVa;
-                    const nameDiffers = plLoad.name !== newName;
-                    const childPhaseLine = meta.selectedPhaseLine || 'L1';
-                    const childPhase = normalizePhase(meta.phase);
-                    const phaseLineDiffers = (childPhase.includes('2W')) && c.phaseLine !== childPhaseLine;
-                    const metaDiffers = JSON.stringify(plLoad.plMetadata) !== JSON.stringify(meta);
+                    const normalizeMeta = (m) => {
+                        if (!m) return {};
+                        return {
+                            type: String(m.type || 'MCCB'),
+                            phase: String(m.phase || '3Ø-4W'),
+                            selectedPhaseLine: String(m.selectedPhaseLine || 'L1'),
+                            at: String(m.at || ''),
+                            af: String(m.af || ''),
+                            method: String(m.method || 'E'),
+                            wire: String(m.wire || 'FCV'),
+                            size: String(m.size || ''),
+                            branchDistance: Number(m.branchDistance) || 15
+                        };
+                    };
+
+                    const normPlMeta = normalizeMeta(plLoad.plMetadata);
+                    const normMeta = normalizeMeta(meta);
+
+                    const vaDiffers = Math.abs((Number(plLoad.va) || 0) - (Number(newVa) || 0)) > 0.1;
+                    const nameDiffers = String(plLoad.name || '').trim() !== String(newName || '').trim();
+                    const childPhaseLine = normMeta.selectedPhaseLine || 'L1';
+                    const childPhase = normalizePhase(normMeta.phase);
+                    const phaseLineDiffers = (childPhase.includes('2W')) && String(c.phaseLine || 'L1') !== String(childPhaseLine);
+                    const metaDiffers = JSON.stringify(normPlMeta) !== JSON.stringify(normMeta);
 
                     if (vaDiffers || nameDiffers || phaseLineDiffers || metaDiffers || !c.connectedPanelId) {
                         hasChanges = true;
@@ -967,7 +1062,12 @@ const PanelLoadContent = () => {
                         else if (childPhase.includes('4W')) newP = 4;
 
                         const newLoads = c.loads.map(l =>
-                            l.id === plLoad.id ? { ...l, name: newName, va: newVa } : l
+                            l.id === plLoad.id ? { 
+                                ...l, 
+                                name: newName, 
+                                va: newVa, 
+                                plMetadata: meta 
+                            } : l
                         );
 
                         const updatedCircuit = {
@@ -1130,6 +1230,46 @@ const PanelLoadContent = () => {
     }, [panelId, projectId, isDataLoaded, isReadyToCheck, totalLoad, phaseTotals, leftCircuits, rightCircuits, syncPanel]);
 
     useEffect(() => {
+        let totalRaw = 0;
+        let totalDem = 0;
+
+        const processList = (circuits) => {
+            circuits.forEach(c => {
+                const isPL = c.connectedPanelId || (typeof c.loadName === 'string' && c.loadName.endsWith('PL'));
+                if (isPL) return;
+
+                let rawPwr = Number(c.power) || Number(c.va) || 0;
+
+                if (c.loads && c.loads.length > 0) {
+                    c.loads.forEach(l => {
+                        if (l.category === 'PL') return;
+                        const qty = Number(l.qty) || 0;
+                        const va = Number(l.va) || 0;
+                        const df = l.demandFactor === undefined ? 100 : Number(l.demandFactor);
+                        totalRaw += qty * va;
+                        totalDem += qty * va * (df / 100);
+                    });
+                } else {
+                    const df = c.demandFactor === undefined ? 100 : Number(c.demandFactor);
+                    totalRaw += rawPwr;
+                    totalDem += rawPwr * (df / 100);
+                }
+            });
+        };
+
+        processList(leftCircuits);
+        processList(rightCircuits);
+
+        const overallDf = totalRaw > 0 ? Math.round((totalDem / totalRaw) * 100) : 100;
+        if (Number(projectInfo.demandFactor) !== overallDf) {
+            setProjectInfo(prev => {
+                if (Number(prev.demandFactor) === overallDf) return prev;
+                return { ...prev, demandFactor: overallDf };
+            });
+        }
+    }, [leftCircuits, rightCircuits, projectInfo.demandFactor]);
+
+    useEffect(() => {
         const handleTriggerSave = async () => {
             const originKey = getOriginKey(panelId);
             const draftKey = getDraftKey(panelId);
@@ -1287,16 +1427,24 @@ const PanelLoadContent = () => {
         setRightCircuits(prev => recalculate(prev));
     }, [kecSettings, projectInfo]);
 
+    const lastFromIdRef = useRef(projectInfo?.fromId || null);
+    useEffect(() => {
+        lastFromIdRef.current = projectInfo?.fromId || null;
+    }, [projectInfo?.fromId]);
+
     useEffect(() => {
         if (!lookupLoaded || !isDataLoaded || !panelId) return;
         const actualParentId = getParentId(panelId);
-        const currentFromId = projectInfo.fromId;
+        const currentFromId = lastFromIdRef.current;
+        
         if (actualParentId && currentFromId !== actualParentId) {
+            lastFromIdRef.current = actualParentId; // 즉시 ref를 갱신하여 연속된 렌더링 트랜잭션에서 무한 루프 차단
             updateProjectInfo('fromId', actualParentId);
             forceSaveRef.current = true;
             markAsDirty(panelId);
             if (lastSourceChangeRef.current) { showToast(`SOURCE Updated: ${getNameById(actualParentId)}`); lastSourceChangeRef.current = false; }
         } else if (!actualParentId && currentFromId) {
+            lastFromIdRef.current = null; // 즉시 ref를 갱신하여 연속된 렌더링 트랜잭션에서 무한 루프 차단
             if (lastSourceChangeRef.current) { showToast("해당 연결은 유효하지 않습니다", "error"); lastSourceChangeRef.current = false; }
             updateProjectInfo('fromId', null);
             forceSaveRef.current = true;
@@ -1347,6 +1495,7 @@ const PanelLoadContent = () => {
     };
 
     const [loadModal, setLoadModal] = useState({ show: false, side: null, circuitId: null, editLoads: [] });
+    const [showDemandManager, setShowDemandManager] = useState(false);
     const filteredPLPanels = useMemo(() => {
         const usedPanelIds = new Set(globalUsedPanelIds || []);
         const collectFromCircuits = (circuits) => { circuits.forEach(c => { if (loadModal.show && loadModal.circuitId === c.id) return; c.loads?.forEach(l => { if (l.connectedPanelId) usedPanelIds.add(String(l.connectedPanelId)); }); }); };
@@ -1365,13 +1514,20 @@ const PanelLoadContent = () => {
     const openLoadModal = (side, circuitId) => {
         const circuits = side === 'left' ? leftCircuits : rightCircuits;
         const circuit = circuits.find(c => c.id === circuitId);
-        const editLoads = (circuit?.loads || []).length > 0 ? circuit.loads.map(l => ({ ...l, qty: (l.qty === 0 || l.qty === undefined) ? '' : l.qty, va: (l.va === 0 || l.va === undefined) ? '' : l.va })) : [{ id: 1, prefix: '', category: '기타', name: '', qty: '', va: '' }];
+        const editLoads = (circuit?.loads || []).length > 0 
+            ? circuit.loads.map(l => ({ 
+                ...l, 
+                qty: (l.qty === 0 || l.qty === undefined) ? '' : l.qty, 
+                va: (l.va === 0 || l.va === undefined) ? '' : l.va,
+                demandFactor: l.demandFactor === undefined ? 100 : l.demandFactor 
+              })) 
+            : [{ id: 1, prefix: '', category: '기타', name: '', qty: '', va: '', demandFactor: 100 }];
         setLoadModal({ show: true, side, circuitId, editLoads });
     };
 
     const closeLoadModal = () => setLoadModal({ show: false, side: null, circuitId: null, editLoads: [] });
     const updateModalLoad = (index, field, value) => setLoadModal(prev => ({ ...prev, editLoads: prev.editLoads.map((load, i) => i === index ? { ...load, [field]: value, ...(field === 'category' && value === 'PL' ? { qty: 1, prefix: '' } : {}) } : load) }));
-    const addModalLoadRow = () => setLoadModal(prev => ({ ...prev, editLoads: [...prev.editLoads, { id: prev.editLoads.length > 0 ? Math.max(...prev.editLoads.map(l => l.id || 0)) + 1 : 1, prefix: '', category: '기타', name: '', qty: '', va: '' }] }));
+    const addModalLoadRow = () => setLoadModal(prev => ({ ...prev, editLoads: [...prev.editLoads, { id: prev.editLoads.length > 0 ? Math.max(...prev.editLoads.map(l => l.id || 0)) + 1 : 1, prefix: '', category: '기타', name: '', qty: '', va: '', demandFactor: 100 }] }));
     const removeModalLoadRow = (index) => setLoadModal(prev => ({ ...prev, editLoads: prev.editLoads.filter((_, i) => i !== index) }));
 
     const saveLoads = () => {
@@ -1385,7 +1541,8 @@ const PanelLoadContent = () => {
             name: l.name.trim(), 
             connectedPanelId: l.connectedPanelId, 
             qty: l.qty === '' ? 0 : (Number(l.qty) || 0), 
-            va: l.va === '' ? 0 : (Number(l.va) || 0) 
+            va: l.va === '' ? 0 : (Number(l.va) || 0),
+            demandFactor: l.demandFactor === undefined ? 100 : (l.demandFactor === '' ? 100 : Number(l.demandFactor))
         }));
         
         const setter = side === 'left' ? setLeftCircuits : setRightCircuits;
@@ -1434,8 +1591,41 @@ const PanelLoadContent = () => {
             return next;
         });
         
-        closeLoadModal(); 
+        closeLoadModal();
         syncPLCircuits();
+    };
+
+    const handleSaveDemandManager = (finalLoads) => {
+        isLocalChangeRef.current = true;
+        recordHistory(leftCircuits, rightCircuits);
+
+        const processCircuitsList = (circuits) => {
+            return circuits.map(c => {
+                const circuitLoads = finalLoads.filter(l => l.circuitId === c.id);
+                if (circuitLoads.length === 0) return c;
+
+                if (c.loads && c.loads.length > 0) {
+                    const nextLoads = c.loads.map((l, idx) => {
+                        const matched = circuitLoads.find(cl => cl.loadIndex === idx && cl.isDetailed);
+                        return matched ? { ...l, demandFactor: matched.demandFactor } : l;
+                    });
+                    return { ...c, loads: nextLoads };
+                } else {
+                    const matched = circuitLoads.find(cl => !cl.isDetailed);
+                    return matched ? { ...c, demandFactor: matched.demandFactor } : c;
+                }
+            });
+        };
+
+        const updatedLeft = processCircuitsList(leftCircuits);
+        const updatedRight = processCircuitsList(rightCircuits);
+
+        setLeftCircuits(updatedLeft);
+        setRightCircuits(updatedRight);
+        
+        handleImmediateConnectionSync(updatedLeft, updatedRight);
+        syncPLCircuits();
+        showToast("수용률이 성공적으로 연동되었습니다.", "success");
     };
 
 
@@ -1587,29 +1777,30 @@ const PanelLoadContent = () => {
     const updateProjectInfo = (field, value) => { 
         isLocalChangeRef.current = true;
         forceSaveRef.current = true; 
-        setProjectInfo(prev => {
-            const next = { ...prev, [field]: value };
+        
+        // 1. React 로컬 상태 업데이트 (순수 함수 유지)
+        setProjectInfo(prev => ({ ...prev, [field]: value }));
+        
+        // 2. 부수 효과(Zustand 전역 업데이트)는 상태 갱신 콜백 바깥에서 즉시 실행!
+        if (['fromId', 'panelName', 'usageType', 'installType', 'branchDistance'].includes(field)) {
+            // 최신 상태를 반영하기 위해 현재 클로저의 projectInfo에 새 값을 병합
+            const nextProjectInfo = { ...projectInfo, [field]: value };
+            const dataToSync = {
+                projectInfo: nextProjectInfo,
+                leftCircuits,
+                rightCircuits
+            };
             
-            // [Optimistic Update] SOURCE(fromId) 또는 주요 필드 변경 시 즉시 전역 스토어 및 타 탭 동기화
-            if (['fromId', 'panelName', 'usageType', 'installType', 'branchDistance'].includes(field)) {
-                const dataToSync = {
-                    projectInfo: next,
-                    leftCircuits,
-                    rightCircuits
-                };
-                
-                // 1. [Memory-First] Zustand 스토어 즉시 갱신 (타 탭 UPDATE_PANEL 브로드캐스트 유발)
-                syncPanel(panelId, dataToSync);
-                
-                // 2. [Optimistic Connection] fromId 변경 시 전역 계통 맵 업데이트
-                if (field === 'fromId') {
-                    useDataStore.setState(state => ({
-                        panelConnections: { ...state.panelConnections, [panelId]: value }
-                    }));
-                }
+            // [Memory-First] Zustand 스토어 즉시 갱신
+            syncPanel(panelId, dataToSync);
+            
+            // [Optimistic Connection] fromId 변경 시 전역 계통 맵 업데이트
+            if (field === 'fromId') {
+                useDataStore.setState(state => ({
+                    panelConnections: { ...state.panelConnections, [panelId]: value }
+                }));
             }
-            return next;
-        }); 
+        }
     };
 
     const broadcastListUpdate = useDataStore(state => state.broadcastListUpdate);
@@ -1707,8 +1898,29 @@ const PanelLoadContent = () => {
     const exportToExcel = () => { if (localStorage.getItem('kelc_project_is_dirty') === 'true') setShowExportSaveModal(true); else performExcelExport(); };
 
     useEffect(() => {
-        const handleKeyDown = (e) => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return; if (e.ctrlKey || e.metaKey) { switch (e.key.toLowerCase()) { case 'c': if (selectedCircuits.length > 0) { e.preventDefault(); handleCopy(); } break; case 'x': if (selectedCircuits.length > 0) { e.preventDefault(); handleCut(); } break; case 'v': if (clipboard.circuits.length > 0) { e.preventDefault(); handlePaste(); } break; default: break; } } else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedCircuits.length > 0) { e.preventDefault(); handleDeleteSelected(); } } };
-        window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown);
+        const handleKeyDown = (e) => { 
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return; 
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                setShowDemandManager(prev => !prev);
+                return;
+            }
+            if (e.ctrlKey || e.metaKey) { 
+                switch (e.key.toLowerCase()) { 
+                    case 'c': if (selectedCircuits.length > 0) { e.preventDefault(); handleCopy(); } break; 
+                    case 'x': if (selectedCircuits.length > 0) { e.preventDefault(); handleCut(); } break; 
+                    case 'v': if (clipboard.circuits.length > 0) { e.preventDefault(); handlePaste(); } break; 
+                    default: break; 
+                } 
+            } else if (e.key === 'Delete' || e.key === 'Backspace') { 
+                if (selectedCircuits.length > 0) { 
+                    e.preventDefault(); 
+                    handleDeleteSelected(); 
+                } 
+            } 
+        };
+        window.addEventListener('keydown', handleKeyDown); 
+        return () => window.removeEventListener('keydown', handleKeyDown);
     }, [selectedCircuits, clipboard, lastSelectedCircuit, contextMenu]);
 
     // [SAFETY] KEC 안전 규정 및 'Chk' 감시 훅 통합 (실시간)
@@ -1790,6 +2002,19 @@ const PanelLoadContent = () => {
     useEffect(() => { 
         if (!panelId || !isDataLoaded || !isLocalChangeRef.current) return;
         
+        const currentFingerprint = JSON.stringify({
+            p: projectInfo,
+            l: leftCircuits,
+            r: rightCircuits,
+            tl: totalLoad,
+            pt: phaseTotals
+        });
+
+        if (lastSyncFingerprintRef.current === currentFingerprint) {
+            return;
+        }
+        lastSyncFingerprintRef.current = currentFingerprint;
+
         // 즉시 상태 변경 알림 (인디케이터 초록색)
         useDataStore.getState().setSyncStatus('local', 'saving');
 
@@ -1876,7 +2101,7 @@ const PanelLoadContent = () => {
                         <div className={`shrink-0 ${toast.type === 'error' ? 'text-red-500' : 'text-indigo-400'}`}>
                             {toast.type === 'error' ? <AlertCircle className="w-[22px] h-[22px] md:w-[28px] md:h-[28px]" /> : <CheckCircle className="w-[22px] h-[22px] md:w-[28px] md:h-[28px]" />}
                         </div>
-                        <div className="flex-1 text-[12.5px] md:text-[14.5px] font-medium tracking-wide">{toast.message}</div>
+                        <div className="flex-1 text-[12.5px] md:text-[14.5px] font-medium tracking-wide whitespace-nowrap">{toast.message}</div>
                         <button onClick={() => setToast(prev => ({ ...prev, show: false }))} className="shrink-0 p-1 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"><X className="w-4 h-4 md:w-5 md:h-5" /></button>
                     </div>
                 </div>
@@ -2010,6 +2235,15 @@ const PanelLoadContent = () => {
                     plDropdownPos={plDropdownPos}
                     saveLoads={saveLoads}
                     getModalTotalVA={getModalTotalVA}
+                    getNameById={getNameById}
+                />
+
+                <DemandManager
+                    show={showDemandManager}
+                    onClose={() => setShowDemandManager(false)}
+                    leftCircuits={leftCircuits}
+                    rightCircuits={rightCircuits}
+                    onSave={handleSaveDemandManager}
                     getNameById={getNameById}
                 />
 

@@ -237,7 +237,10 @@ export const useGraphData = () => {
                     normalizedVA = calculatePanelTotalLoad(pData) || info.cachedTotalLoad || 0;
                 }
 
-                capacity = normalizedVA / 1000;
+                // 수용률(Demand Factor)에 의한 이중 연산 방지: capacity와 totalIb를 원시(Raw) 값으로 보정
+                const dfRatio = (Number(demandFactor) || 100) / 100;
+                const rawVA = dfRatio > 0 ? normalizedVA / dfRatio : normalizedVA;
+                capacity = rawVA / 1000;
 
                 // --- 전류(Ib) 산출 로직 (게이지용) ---
                 const vStr = String(info.voltage || '380V');
@@ -245,12 +248,12 @@ export const useGraphData = () => {
                 const cleanPh = String(info.phase || '').replace(/[-\s]/g, '').replace(/Ø/g, 'Φ').toUpperCase();
                 const K = cleanPh.includes('1Φ') ? 1 : Math.sqrt(3);
 
-                totalIb = normalizedVA / (v * K);
-                demandIb = totalIb * (demandFactor / 100);
+                totalIb = rawVA / (v * K);
+                demandIb = normalizedVA / (v * K);
 
                 // 개별 노드 전력 데이터 저장 (합산용)
                 nodeTotalLoads[panel.id] = capacity;
-                nodeDemandLoads[panel.id] = capacity * (demandFactor / 100);
+                nodeDemandLoads[panel.id] = normalizedVA / 1000;
 
                 if (isTransformer) {
                     phase = "3P4W (Main)";

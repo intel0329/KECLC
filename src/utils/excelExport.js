@@ -423,24 +423,33 @@ const buildPanelWorksheet = (workbook, sheetName, projectInfo, leftCircuits, rig
     rSumVal.height = 20;
     for (let c = 2; c <= 34; c++) applyStyle(rSumVal.getCell(c), valueCfg);
 
-    const finalTotalCurrent = totalLoad / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220);
-    const finalMaxPhaseLoad = Math.floor(phaseTotals.max);
+    const rawTotalLoad = phaseTotals.rawL1 !== undefined 
+        ? (phaseTotals.rawL1 + phaseTotals.rawL2 + phaseTotals.rawL3) 
+        : (totalLoad / (((Number(projectInfo.demandFactor) || 100)) / 100));
+    const rawTotalCurrent = rawTotalLoad / (projectInfo.phase.includes('3Ø') ? (380 * Math.sqrt(3)) : 220);
+    const rawMaxPhaseLoad = phaseTotals.rawMax !== undefined 
+        ? phaseTotals.rawMax 
+        : (phaseTotals.max / (((Number(projectInfo.demandFactor) || 100)) / 100));
+    const rawMaxPhaseCurrent = phaseTotals.rawMaxCurrent !== undefined 
+        ? phaseTotals.rawMaxCurrent 
+        : (phaseTotals.maxCurrent / (((Number(projectInfo.demandFactor) || 100)) / 100));
+
     const finalAllCircuits = [...leftCircuits, ...rightCircuits];
     let finalMaxDistCircuit = null, finalMaxDist = -1;
     finalAllCircuits.forEach(c => { const dist = Number(c.cableDistance) || 0; if (dist > finalMaxDist) { finalMaxDist = dist; finalMaxDistCircuit = c; } });
 
     rSumVal.getCell(2).value = `${projectInfo.phase} MCCB`;
     rSumVal.getCell(5).value = `${projectInfo.mccbAF}AF / ${projectInfo.mccbAT}AT`;
-    rSumVal.getCell(8).value = `${(totalLoad).toLocaleString()} VA`;
-    rSumVal.getCell(11).value = `${finalTotalCurrent.toFixed(1)} A`;
-    rSumVal.getCell(14).value = `${finalMaxPhaseLoad.toLocaleString()} VA`;
-    rSumVal.getCell(16).value = `${phaseTotals.maxCurrent.toFixed(1)} A`;
+    rSumVal.getCell(8).value = `${Math.round(rawTotalLoad).toLocaleString()} VA`;
+    rSumVal.getCell(11).value = `${rawTotalCurrent.toFixed(1)} A`;
+    rSumVal.getCell(14).value = `${Math.round(rawMaxPhaseLoad).toLocaleString()} VA`;
+    rSumVal.getCell(16).value = `${rawMaxPhaseCurrent.toFixed(1)} A`;
     rSumVal.getCell(20).value = finalAllCircuits.length;
     rSumVal.getCell(21).value = finalMaxDistCircuit?.loadName || '-';
     rSumVal.getCell(23).value = finalMaxDist > 0 ? `${finalMaxDist} m` : '-';
     rSumVal.getCell(25).value = `${(Number(projectInfo.voltageDropLimit) || 3.0).toFixed(2)} %`;
     rSumVal.getCell(28).value = `${projectInfo.demandFactor || '100'}%`;
-    const finalDemandKva = (totalLoad / 1000) * ((Number(projectInfo.demandFactor) || 100) / 100);
+    const finalDemandKva = totalLoad / 1000;
     rSumVal.getCell(30).value = `${finalDemandKva.toFixed(2)} kVA`;
     const finalEstPanelSize = projectInfo.calculatedPanelSize
         ? `${projectInfo.calculatedPanelSize.width} x ${projectInfo.calculatedPanelSize.height}`

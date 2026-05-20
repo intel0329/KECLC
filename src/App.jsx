@@ -18,6 +18,7 @@ import CubiclePage from './components/cubicle/CubiclePage';
 import Visual from './components/Visual';
 import VisualBand from './components/VisualBand';
 import SyncStatusIndicator from './components/SyncStatusIndicator';
+import BroadcastRadar from './components/dev/BroadcastRadar';
 import useDataStore from './store/useDataStore';
 import UPS from './components/UPS';
 import LowVoltageReceivingCapacity from './components/LowVoltageReceivingCapacity';
@@ -72,10 +73,30 @@ const LowVoltageReceivingCapacityWrapper = () => {
 function App() {
     // Removed: Session initialization logic that was unintentionally clearing the active project state across tabs.
 
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // Ctrl + Shift + D 단축키 감지하여 개발자 모드 토글
+            if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === 'D') {
+                e.preventDefault();
+                const current = localStorage.getItem('KECLC_DEV_MODE') === 'true';
+                const nextVal = !current;
+                localStorage.setItem('KECLC_DEV_MODE', String(nextVal));
+                
+                // 개발자 모드 토글 이벤트 송출 (BroadcastRadar 컴포넌트 렌더링 동기화)
+                window.dispatchEvent(new CustomEvent('kelc_dev_mode_toggled'));
+                console.log(`[DEV MODE] Toggled to: ${nextVal}`);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     return (
         <div className="flex flex-col min-h-screen bg-black text-white">
             <Header />
             <SyncStatusIndicator />
+            <BroadcastRadar />
             <main className="flex-grow relative">
                 <Routes>
                     {/* 프로젝트 관리 - 메인 홈 */}

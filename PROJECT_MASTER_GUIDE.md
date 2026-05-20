@@ -71,7 +71,8 @@ graph TD
 - **SSOT (Single Source of Truth) 확장:** `panelsData`뿐만 아니라 계통도(`panelConnections`) 정보 역시 스토어의 핵심이며, 모든 변경 사항은 즉시 브로드캐스트 되어야 한다.
 - **Sync-Before-Broadcast (선행 DB 동기화 원칙):** 계통의 호적(연결 정보)이 변경될 때는 반드시 서버 DB(`savePanelConnections`)를 우선 업데이트(`await`)한 후 방송(Broadcast)을 쏘아야 한다. 이는 타 탭이 방송을 수신한 즉시 최신 정보를 서버에서 조회할 수 있게 하여 '동기화 역류(Back-flow)'를 방지하는 결정론적 설계의 핵심이다.
 - **Optimistic UI Guards:** 로컬 수정(`isLocalChangeRef`) 중에는 외부 브로드캐스트 메시지에 의한 덮어쓰기를 차단하여 편집 충돌을 방지한다.
-- **지문 기반 값 직렬화 노이즈 필터 가드 (Value-based Fingerprint Guard):** 대시보드(갑지/간선) 모듈을 여러 탭에 동일하게 띄웠을 때 발생하는 무한 에코(초록색 인디케이터 무한 핑퐁)를 완벽 차단하기 위해, `lastSyncFingerprintRef`를 사용해 데이터의 핵심 키 값들을 직렬화한 지문(Fingerprint)이 이전 싱크 시점과 다를 때만 동기화(`syncPanel`)를 실행하도록 원천 봉쇄한다.
+- **지문 기반 값 직렬화 노이즈 필터 가드 (Value-based Fingerprint Guard):** 여러 탭에서 계산서 모듈을 동시에 띄웠을 때 발생하는 전역 상태 동기화의 무한 핑퐁 루프를 완전히 차단하기 위해 `lastSyncFingerprintRef`를 사용한다. `projectInfo`, `circuits`, `totalLoad`, `phaseTotals` 등 핵심 실질 데이터들의 직렬화 지문(Fingerprint)이 이전 싱크 시점과 다른 경우에만 `syncPanel`을 실행하도록 하여, 단순 객체 참조 불일치로 인한 동기화 무한 릴레이를 원천 봉쇄한다. (PanelLoad, Receiving Capacity 등 주요 계산서 공통 장착)
+- **동적 트랜잭션 참조 가드 (Dynamic Transaction Reference Guard):** 부모-자식 간 계통 연동(`fromId`) 동기화 시, React의 비동기 상태 갱신 예약(Batching)과 Zustand 스토어의 동기식 업데이트 사이에 발생하는 리렌더링 시차(Stale Closure)로 인한 무한 루프를 방지하기 위해 `lastFromIdRef`를 사용한다. 상태 업데이트 호출 직전에 레프를 선제 동기화함으로써, 연속된 동기식 재진입 시 발생할 수 있는 무한 호출 에러(`Maximum update depth exceeded`)를 원천 차단한다.
 
 ### 2.5 하이드레이션 방어막
 - **Memory-First Barrier**: 페이지 이동 시 스토어에 이미 데이터가 있다면 서버 호출을 스킵하여 속도를 최적화한다.
@@ -270,6 +271,29 @@ KECLC는 데이터 유실 방지와 성능 최적화를 위해 다음과 같은 
 - `calculateIb`: 전압 및 상수에 따른 설계전류 계산.
 - `calculateIz`: 공사방법, 주위온도, 집합보정계수를 적용한 허용전류 계산.
 - `calculateKECJudgment`: 8가지 항목(AT_B, AT_TH, AT_SC, SB, SCB, SE, SSC, SMSTh)에 대한 KEC 규정 적합성 판정.
+
+---
+
+## 9. Developer Mode & Broadcast Radar (개발자 모드 및 브로드캐스트 레이더)
+
+개발자가 브라우저 다중 탭 간의 실시간 통신 흐름(Packet Flow)과 패킷의 데이터 정합성을 비침습적으로 디버깅할 수 있도록 내장형 개발자 도구를 기본 제공한다.
+
+### 9.1 개발자 모드 토글 명세
+- **단축키 표준:** `Ctrl + Shift + D` 입력 시 `localStorage` 내부의 `KECLC_DEV_MODE` 불리언 값을 실시간 토글(`true` / `false`)한다.
+- **반응형 갱신:** 단축키 토글 시 `kelc_dev_mode_toggled` 커스텀 이벤트를 방송하여 최상위 전역 레이아웃에 마운트된 `<BroadcastRadar />` 컴포넌트의 렌더링 상태를 0.1초 내로 동기화한다.
+
+### 9.2 브로드캐스트 레이더(Broadcast Radar) 아키텍처
+- **컴포넌트 위치:** `src/components/dev/BroadcastRadar.jsx` 에 독립 격리되어 메인 비즈니스(계산서) 컴포넌트들의 번들 크기 압박을 완전히 차단한다.
+- **디자인 표준:**
+  - 다크 글래스모피즘 (`backdrop-blur-md bg-black/75 border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.7)] rounded-xl`) 레이아웃.
+  - monospace 고정폭 폰트(`font-mono`), 초소형 본문(`text-[11px]`).
+- **도청형(Hooking) 패킷 로깅 규칙:**
+  - **TX (송신 패킷):** 시안 블루 (`text-sky-400`). 내 탭에서 데이터 갱신 시 `bc.postMessage` 전송 직전 수집.
+  - **RX (수신 패킷):** 라벤더 퍼플 (`text-fuchsia-400`). 타 탭에서 메시지 전달 시 `bc.onmessage` 수집 직후 필터링을 거쳐 수집.
+  - **WARN (경고/오류):** 앰버 옐로우 (`text-yellow-500`). 로컬 저장소 용량 초과 에러(`QuotaExceededError`) 및 서버 DB 백그라운드 업로드 실패 시 캐치하여 수집.
+- **비침습적 도청 및 회귀 안전망 (Safe read-only hook):**
+  - 레이더는 오직 발생한 전역 이벤트를 수신해서 배열 버퍼에 적재하는 순수 Read-only 디버거이다. 스토어 상태 변경을 수반하는 쓰기 작업(`set`)을 절대 행하지 않아 무한 루프 발생 가능성을 원천 차단한다.
+  - 로그 배열은 항상 **최대 10개**로 제한되어 가용 메모리가 누수되지 않도록 관리한다.
 
 ---
 

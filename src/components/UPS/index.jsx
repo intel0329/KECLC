@@ -73,7 +73,7 @@ const UPS = () => {
     // [Phase 1] Safe-Draft v2 Core State
     const [isHydrating, setIsHydrating] = useState(true);
     const isLocalChangeRef = useRef(false);
-    const lastSyncRef = useRef({ dataStr: '', resultStr: '' });
+    const lastSyncFingerprintRef = useRef('');
     const latestDataRef = useRef(null);
     const [isPending, startTransition] = useTransition();
 
@@ -1633,11 +1633,62 @@ const UPS = () => {
         markAsDirty(panelId);
     }, [panelId]);
 
-    // [Phase 1] Zero-Sync (Zustand Store Sync)
+    // [UPS 자식 연결 변경 실시간 낙관적 동기화]
+    const lastChildConnectionsRef = useRef('');
+    useEffect(() => {
+        if (!isDataLoaded || !panelId) return;
+
+        const uniqueBanks = Array.from(new Set(powerLoads?.map(l => l.bankId).filter(Boolean) || []));
+        const connectionFingerprint = JSON.stringify(uniqueBanks.sort());
+
+        if (lastChildConnectionsRef.current === connectionFingerprint) return;
+        lastChildConnectionsRef.current = connectionFingerprint;
+
+        // 로컬 변경 시에만 전역 맵 및 브로드캐스트 전파 수행
+        if (isLocalChangeRef.current) {
+            console.log('[UPS Connection Sync] Local change detected. Syncing child connections:', uniqueBanks);
+            
+            // 1. 전역 Zustand panelConnections 갱신
+            useDataStore.setState(state => {
+                const nextMap = { ...state.panelConnections };
+                // 기존에 이 패널(UPS)을 부모로 바라보던 자식들 제거
+                Object.keys(nextMap).forEach(cid => {
+                    if (String(nextMap[cid]) === String(panelId)) delete nextMap[cid];
+                });
+                // 새 자식들 등록
+                uniqueBanks.forEach(bankId => {
+                    nextMap[String(bankId)] = String(panelId);
+                });
+                return { panelConnections: nextMap };
+            });
+
+            // 2. 타 탭에 즉시 연결 변경 방송 송신
+            try {
+                const channel = new BroadcastChannel('KECLC_CONNECTION_SYNC');
+                channel.postMessage({ type: 'CONNECTION_CHANGED', projectId });
+                channel.close();
+            } catch (e) {
+                console.error('[UPS Connection Sync] Broadcast failed:', e);
+            }
+        }
+    }, [projectId, panelId, isDataLoaded, powerLoads]);
+
+    // [UPS 전역 제로-싱크 및 지문 가드 이식]
     useEffect(() => {
         if (!panelId || !isDataLoaded) return;
 
-        // 즉시 상태 변경 알림 (인디케이터 초록색)
+        // 1. 참조 변동 노이즈 필터링을 위한 값 기반 핵심 지문(Fingerprint) 생성
+        const currentFingerprint = JSON.stringify({
+            p: projectInfo,
+            pl: powerLoads,
+            df: demandFactorSummary
+        });
+
+        // 2. 무한 핑퐁 루프 원천 차단
+        if (lastSyncFingerprintRef.current === currentFingerprint) return;
+        lastSyncFingerprintRef.current = currentFingerprint;
+
+        // 3. 즉시 상태 변경 알림 (인디케이터 초록색)
         if (isLocalChangeRef.current) {
             useDataStore.getState().setSyncStatus('local', 'saving');
         }
@@ -1679,37 +1730,25 @@ const UPS = () => {
             calculatedLoads 
         };
 
-        const dataStr = JSON.stringify(syncData);
-        const resultStr = JSON.stringify(syncResult);
+        // [REACTIVE] Use transition for background sync to keep UI responsive
+        startTransition(() => {
+            syncPanel(panelId, syncData, syncResult);
 
-        // [STRICT] Break the reactive loop by guarding with a deep comparison ref
-        if (lastSyncRef.current.dataStr !== dataStr || lastSyncRef.current.resultStr !== resultStr) {
-            lastSyncRef.current = { dataStr, resultStr };
-            
-            // [REACTIVE] Use transition for background sync to keep UI responsive
-            startTransition(() => {
-                syncPanel(panelId, syncData, syncResult);
-
-                // 로컬 동기화 완료 후 인디케이터 유지
-                if (isLocalChangeRef.current) {
-                    const timer = setTimeout(() => {
-                        useDataStore.getState().setSyncStatus('local', 'saved');
-                        setTimeout(() => {
-                            const currentLocalStatus = useDataStore.getState().syncStatus?.local;
-                            if (currentLocalStatus === 'saved') {
-                                useDataStore.getState().setSyncStatus('local', 'idle');
-                            }
-                        }, 2000);
-                    }, 500);
-                    return () => clearTimeout(timer);
-                }
-            });
-
-            // [MASTER GUIDE] 타 계산서(간선 등)의 즉각적 리액티브 반응을 위한 시그널 발송
-            // [REMOVED] Legacy signal
-            // localStorage.setItem('kelc_data_update_signal', Date.now().toString());
-        }
-    }, [panelId, isDataLoaded, projectInfo, powerLoads, totalLoad, demandFactorSummary, calculatedLoads, syncPanel]);
+            // 로컬 동기화 완료 후 인디케이터 유지
+            if (isLocalChangeRef.current) {
+                const timer = setTimeout(() => {
+                    useDataStore.getState().setSyncStatus('local', 'saved');
+                    setTimeout(() => {
+                        const currentLocalStatus = useDataStore.getState().syncStatus?.local;
+                        if (currentLocalStatus === 'saved') {
+                            useDataStore.getState().setSyncStatus('local', 'idle');
+                        }
+                    }, 2000);
+                }, 500);
+                return () => clearTimeout(timer);
+            }
+        });
+    }, [panelId, isDataLoaded, projectInfo, powerLoads, totalLoad, phaseTotals, demandFactorSummary, calculatedLoads, syncPanel]);
 
     if (!isDataLoaded || isHydrating) {
         return (

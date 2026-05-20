@@ -99,7 +99,7 @@ const UpsLoadSummary = (props) => {
                             <span className="flex items-baseline">
                                 <input
                                     type="number"
-                                    value={projectInfo.mccbAF}
+                                    value={projectInfo.mccbAF || ''}
                                     onChange={(e) => updateProjectInfo('mccbAF', e.target.value)}
                                     className="bg-transparent border-none text-yellow-400 font-normal text-2xl outline-none text-left [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none p-0"
                                     style={{ width: `${String(projectInfo.mccbAF || '').length || 1}ch` }}
@@ -109,7 +109,7 @@ const UpsLoadSummary = (props) => {
                             <span className="flex items-baseline ml-4">
                                 <input
                                     type="number"
-                                    value={projectInfo.mccbAT}
+                                    value={projectInfo.mccbAT || ''}
                                     onChange={(e) => updateProjectInfo('mccbAT', e.target.value)}
                                     className="bg-transparent border-none text-yellow-400 font-normal text-2xl outline-none text-left [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none p-0"
                                     style={{ width: `${String(projectInfo.mccbAT || '').length || 1}ch` }}
@@ -158,7 +158,7 @@ const UpsLoadSummary = (props) => {
                             <span className="flex items-baseline">
                                 <input
                                     type="number"
-                                    value={projectInfo.mainCapacity}
+                                    value={projectInfo.mainCapacity || ''}
                                     onChange={(e) => updateProjectInfo('mainCapacity', e.target.value)}
                                     className="bg-transparent border-none text-yellow-400 font-normal text-2xl outline-none text-left [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none p-0"
                                     style={{ width: `${Math.max(1, String(projectInfo.mainCapacity || 0).length)}ch` }}

@@ -1,13 +1,16 @@
 [
     {
         "date": "2026-05-18",
-        "title": "대시보드 자가 치유(Self-Healing) 이중 강화 및 계통 고스트 락(Ghost-Lock) 결함 해결",
+        "title": "대시보드 자가 치유 이중 강화 및 분전반(PanelLoad) 무한 렌더링 루프 박멸",
         "changes": [
+            "분전반(PanelLoad) 4단계 무한 렌더링 루프 박멸 및 무결성 수립: 1단계 plMetadata 누락 복구, 2단계 normalizeMeta 타입/소수점 오차 허용 비교 가드 도입, 3단계 lastSyncFingerprintRef 값 지문 비교 가드로 Zustand 에코 핑퐁 완벽 차단, 4단계 lastFromIdRef 동적 트랜잭션 참조 가드 장착으로 리액트 배칭 시차 무한루프 완벽 정밀 타격",
+            "리액트 렌더 단계 부수 효과 격리: updateProjectInfo 함수 내 setProjectInfo 콜백 내부에서 Zustand 전역 스토어 직접 갱신하던 안티 패턴을 콜백 바깥으로 완벽 격리 집도",
+            "UPS 부하 요약 uncontrolled input Warning 치료: AF, AT, Capacity 등 바인딩 필드에 || '' 폴백 방어벽을 설치하여 렌더링 무결성 확보",
             "2중 자가 치유(Self-Healing) 방어막 구축: usePanelLookup.js 내 childToParentMap 및 usedIds(사용 중 마킹) 등록 시 대시보드(panel-feeder, transformer-main) 관련 오염 데이터가 있을 경우 자동으로 무시 및 치유하도록 .includes() 기반 이중 차단막 적용",
             "기존 패널 검색 고스트 락(Ghost Lock) 결함 해결: 연결 해제된 구버전 패널들이 DB 내 쓰레기 데이터로 인해 '사용 중(usedIds)'으로 잘못 판정되어 드롭다운 검색 목록에서 숨겨지던 사각지대를 완전히 해소하여 원상 복구",
             "드롭다운 필터링 강화: 단일 계산서 복원 부작용으로 분전반 드롭다운에 '발전기 용량 계산서(generator)'와 'TRAY 계산서(tray)'가 노출되던 문제를 setPanels 필터 레벨에서 완벽 차단 (단, 내부 번역용 맵 원형은 철저히 유지)",
             "DB 및 상태 무결성 강화: MariaDB 내 panel_connections 테이블 오염 데이터 정화 완료 및 변압기 모듈 내 currentConnections[id] Zustand 상태 정리 로직 정상 반영 검증",
-            "시스템 마스터 설계서 최신화: PROJECT_MASTER_GUIDE.md에 '대시보드 자가 치유 원칙', '조건부 사용 중 마킹 규칙', '대시보드 명단 영구 제외 규칙' 공식 추가 수록",
+            "시스템 마스터 설계서 최신화: PROJECT_MASTER_GUIDE.md에 '대시보드 자가 치유 원칙', '조건부 사용 중 마킹 규칙', '대시보드 명단 영구 제외 규칙' 공식 추가 수록 및 Value-based Fingerprint Guard / Dynamic Transaction Reference Guard 아키텍처 가드 등재",
             "대시보드 모듈(갑지/간선) 무한 렌더링 에코 차단 및 제로-싱크 보존: lastSyncFingerprintRef를 활용한 값(Value) 기반 직렬화 비교 가드를 syncPanel useEffect 블록에 이식하여 다중 탭 오픈 시 발생하는 초록색 인디케이터 무한 핑퐁 및 CPU/네트워크 부하 완벽 해결",
             "변압기 갑지-을지 용량 실시간 동기화(Reactivity) 완성: 을지 계산서에서 변압기 용량(mainCapacity)을 변경 시, 부모 갑지 계산서의 powerLoads 내 static bankCapacity 필드와 totalTransformerCapacity 계산 로직이 전역 Zustand 스토어(panelsData)로부터 최신 용량을 실시간 수신하여 실시간 무결하게 동기화 및 자동 저장되도록 리액티브 싱크 엔진 구축"
         ]

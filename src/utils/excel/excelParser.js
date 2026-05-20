@@ -3,6 +3,28 @@ import { mapCategoryByName, getLoadClassification, getWireClassification } from 
 import { getTemplateById } from './excelTemplates';
 
 /**
+ * 문자열에서 숫자 부분만 정규식으로 유연하게 추출하여 파싱합니다.
+ * 예: "x1" -> 1, "1,000" -> 1000, "1000W" -> 1000, "x2.5" -> 2.5
+ */
+const safeParseFloat = (val) => {
+    if (val === undefined || val === null) return 0;
+    const str = String(val).trim();
+    if (!str) return 0;
+    
+    // 단순 parseFloat 시도 (숫자로 바로 시작하는 경우, 예: "1000W", "220V")
+    const parsed = parseFloat(str);
+    if (!isNaN(parsed)) return parsed;
+
+    // 만약 NaN이 나오면, 문자열 내부에서 숫자와 소수점만 추출하여 파싱 시도 (예: "x1", "x2")
+    const match = str.replace(/,/g, '').match(/[\d.]+/);
+    if (match) {
+        const floatVal = parseFloat(match[0]);
+        return isNaN(floatVal) ? 0 : floatVal;
+    }
+    return 0;
+};
+
+/**
  * 차단기 종류 명칭을 규격에 맞게 변환합니다.
  */
 const normalizeBreakerType = (type) => {
@@ -239,8 +261,12 @@ export const parseExcelToLoads = (workbook, sheetName, templateId = 'standard_ke
                 }
             }
 
-            const unitLoad = parseFloat(row[indexes.unitLoad]) || 0;
-            const qty = parseFloat(row[indexes.qty]) || 0;
+            const unitLoad = safeParseFloat(row[indexes.unitLoad]) || 0;
+            const qty = safeParseFloat(row[indexes.qty]) || 0;
+            const totalLoad = safeParseFloat(row[indexes.totalLoad]) || (unitLoad * qty);
+
+            // 개별용량이 0이고 합계용량이 존재한다면 개별용량을 유추(역산)합니다.
+            const effectiveUnitLoad = unitLoad || (totalLoad / (qty || 1));
 
             if (!name && !circuitNoFromExcel) continue;
 
@@ -258,7 +284,7 @@ export const parseExcelToLoads = (workbook, sheetName, templateId = 'standard_ke
                 category,
                 name: String(name || 'Spare').trim(),
                 qty: Math.max(1, qty),
-                capacity: unitLoad,
+                capacity: effectiveUnitLoad,
                 prefix: prefix,
                 unit: 'VA',
                 demandFactor: 100,
@@ -325,9 +351,9 @@ export const parseSheetToPanelData = (workbook, sheetName, templateId = 'standar
 
             const circuitNo = String(row[indexes.id] || '').trim();
             const loadName = String(row[indexes.name] || '').trim();
-            const unitLoad = parseFloat(row[indexes.unitLoad]) || 0;
-            const qty = parseFloat(row[indexes.qty]) || 0;
-            const totalLoad = parseFloat(row[indexes.totalLoad]) || (unitLoad * qty);
+            const unitLoad = safeParseFloat(row[indexes.unitLoad]) || 0;
+            const qty = safeParseFloat(row[indexes.qty]) || 0;
+            const totalLoad = safeParseFloat(row[indexes.totalLoad]) || (unitLoad * qty);
 
             const noSpaceCircuitNo = circuitNo.replace(/\s+/g, '');
             const noSpaceLoadName = loadName.replace(/\s+/g, '');
@@ -385,12 +411,16 @@ export const parseSheetToPanelData = (workbook, sheetName, templateId = 'standar
                 if (isMetadataRow) continue;
 
                 const { prefix, category } = getLoadClassification(loadName, templateId);
+
+                // 개별용량이 0이고 합계용량이 존재한다면 개별용량을 유추(역산)합니다.
+                const effectiveUnitLoad = unitLoad || (totalLoad / (qty || 1));
+
                 currentCircuit.loads.push({
                     id: Date.now() + (i * 100),
                     category,
                     name: loadName,
                     qty: qty || 1,
-                    va: unitLoad,
+                    va: effectiveUnitLoad,
                     prefix: prefix
                 });
                 currentCircuit.power += totalLoad;
