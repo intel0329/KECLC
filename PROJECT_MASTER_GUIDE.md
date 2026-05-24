@@ -179,6 +179,15 @@ KECLC는 데이터 유실 방지와 성능 최적화를 위해 다음과 같은 
     2. **계통 개입 금지 (Non-Intervention):** `handleImmediateConnectionSync`와 같이 전역 족보를 수정하는 로직을 배제하고, 오직 이미 형성된 계통을 구독(Subscribe)하여 리액티브하게 렌더링한다.
     3. **리액티브 룩업 (Reactive Lookup):** 연결된 부하(Destination) 패널의 최신 데이터(용량, 차단기 정격, 전선 규격 등)를 `useMemo` 기반으로 실시간 구독하여 출력한다. 이를 통해 타 탭의 계통 변경 사항이 별도의 조작 없이 UI에 즉시 반영된다.
     4. **기술적 보완:** `getRemoteData`, `setRemoteData`를 통한 간선 데이터 자체의 영속성은 유지하되, 전역 계통도를 오염시킬 수 있는 `savePanelConnections` 호출은 엄격히 차단한다.
+    5. **초고속 양방향 단선 검증 엔진 (Strict Gatekeeper Engine):**
+        - **배경:** 계통 동기화("Sync Energy Flow") 수행 시 연결 정합성을 0.01초 내로 동기식 스캔하여 정렬 전에 단선된 회로를 완벽하게 차단하고 보호한다.
+        - **Source of Truth 철칙:** Zustand의 비동기 스토어 캐시(`panels`) 대신, 전체 족보 맵 `idToName` 및 계통 족보 함수 `getParentId`를 정적 기준으로 삼아 오판을 원천 방지한다.
+        - **양방향 Ping-Pong 검증 규칙:**
+            - **고아 참조 (Orphan Reference) 검증:** `toId`가 존재하는데 전체 족보 맵 `idToName`에 해당 패널이 존재하지 않는 경우 (`!idToName[toId]`).
+            - **역방향 소실 (Reverse Connection Lost) 검증:** `getParentId(toId)`를 통해 도출된 실제 부모 ID(`actualParentId`)가, 해당 피더 행의 진짜 전기적 부모 ID(`fromId`)와 불일치하는 경우.
+        - **하드 스톱 (Hard Stop) 및 시각적 경고 연동:**
+            - 단 1건이라도 단선이 감지되면 동기화 정렬 로직 진행을 즉각 중단하고, 해당 회로의 실제 이름(예: 'PP-EV')을 포함한 명확한 브라우저 경고(`alert`)를 출력한다.
+            - UI 상에서 단선이 감지된 피더 행의 TO 입력란을 `!text-red-500 font-bold underline` 스타일로 실시간 조건부 강조하여 사용자의 수정을 직관적으로 유도한다.
 - **UPS (Bank 부하 실시간 동기화 & Phase-Aware Aggregation)**: 연결된 분전반(Bank)의 회로 데이터를 실시간으로 확장 표시하며, **'심층 전파(Deep Propagation)'** 엔진을 통해 자식의 상별 부하를 부모 계통으로 정밀하게 전달한다.
     1. **심층 계층 재귀 로딩 (Deep Recursive Hydration):**
         - `UPS > 자식 > 손자`로 이어지는 복잡한 계층 구조에서 데이터 공백을 방지하기 위해, 초기 로딩 및 패널 선택 시 하위 모든 연결 패널(Grandchildren)을 재귀적으로 탐색하여 전역 스토어(`panelsData`)에 즉시 로드한다.
@@ -217,6 +226,43 @@ KECLC는 데이터 유실 방지와 성능 최적화를 위해 다음과 같은 
     1. **구조적 정합성:** 신규 계산서(UPS, LowVoltage 등) 생성 시, 사용자가 Decide Drawer를 열지 않더라도 간선 계산서에서 즉시 기술 사양을 읽어갈 수 있도록 초기 상태(`projectInfo`)에 기본값(공사방법 'E', 전선종류 'FCV' 등)이 반드시 포함되어야 한다.
     2. **Fallback 일관성:** 하이드레이션 실패 시의 Fallback 객체 역시 초기 상태와 동일한 기술 설정 기본값을 보유하여 데이터 누락을 방지해야 한다.
 - **KEC 판단 (kecCalculations.js)**: Ib(설계전류), Iz(허용전류), In(차단기정격) 간의 관계(`Ib ≤ In ≤ Iz`)를 검증하고, 전압강하와 단락 보호 협조를 수행한다.
+
+### 5.2 에너지 플로우 그래프(Visual) 및 노드/게이지 작동 원리
+
+에너지 플로우 화면(`src/components/Visual`)은 프로젝트에 연동된 계산서들을 계통도(Dagre Layout) 형식으로 표현하며, 상하향식 데이터 취합 및 게이지 렌더링에 엄격한 비즈니스 룰을 적용합니다.
+
+#### 1. 게이지 시각화 작동 원리 (Gauge Logic)
+노드 하단에 채워지는 게이지 바는 사용자가 대시보드에서 선택한 부하 모드(총부하 vs 수용부하)에 따라 완전히 다른 연산 규칙을 따릅니다.
+
+1. **총부하 모드 (Total Load Mode - `data.isDemandMode === false`)**
+   - **일반 부하 노드 (Panel-Load 등)**: 차단기 한도율을 보여줍니다. `(설계전류 totalIb / 차단기 AT값 atValue) * 100`으로 계산하며, 차단기 규격 대비 부하 여유율을 시각화합니다.
+   - **을지 변압기 노드 (Transformer)**: 변압기 용량 대비 실제 하위 총부하의 사용률을 표현합니다. `(하위 총부하 calculatedTotalLoad / 변압기 용량 trCapacity) * 100`으로 계산됩니다.
+   - **갑지 변압기 노드 (HV)**: 전체 변압기 용량 합계 대비 하위 실제 총부하의 사용률을 보여줍니다. `(하위 총부하 calculatedTotalLoad / 전체 을지 용량 합계 capacity) * 100`으로 계산됩니다.
+   - **발전기 노드 (GENERATOR)**: 발전기 용량 대비 현재 사용률을 표현합니다. `(합산 총부하 calculatedTotalLoad / 발전기 용량 capacity) * 100`으로 계산됩니다.
+   - **외부 전원 노드 (SOURCE)**: 전원 공급원은 항상 고정되어 작동하므로 **100%**로 꽉 찬 게이지가 노출됩니다.
+
+2. **수용부하 모드 (Demand Load Mode - `data.isDemandMode === true`)**
+   - **일반 부하 노드**: 패널에 임베딩된 수용률 자체를 시각화합니다. `demandFactor` (기본값 100%) 값을 그대로 게이지에 반영합니다.
+   - **변압기 노드 (을지 및 갑지)**: 하위 계통의 종합 수용률인 **합산 수용률(Aggregated Demand Factor)**을 보여줍니다. `(합산 수용부하 calculatedDemandLoad / 합산 총부하 calculatedTotalLoad) * 100`으로 연산됩니다.
+   - **발전기 노드 (GENERATOR)**: 수용률 모드에서도 기기의 안전성을 위해 발전기 자체의 용량 대비 수용부하 비율인 `(수용부하 calculatedDemandLoad / 발전기 용량 capacity) * 100`을 표시합니다.
+
+---
+
+#### 2. 노드별 부하 취합 및 계산 원리 (Node-Specific Aggregation)
+
+1. **일반 부하 노드 (Panel-Load / Power-Load)**
+   - 계산 결과(VA)를 kVA 단위로 정규화하여 `nodeTotalLoads[panelId]` 및 `nodeDemandLoads[panelId]` 참조 맵에 주입합니다.
+   - 스토어 결과가 부재할 경우(`pResult`가 null인 상황) 런타임 손실을 방지하기 위해 로컬 캐시(`info.cachedTotalLoad`) 또는 재계산 함수(`calculatePanelTotalLoad`)에서 값을 추출하는 자가 치유(Self-Healing) 수식을 사용합니다.
+
+2. **을지 변압기 노드 (Transformer Nodes)**
+   - **합산 전파 규칙 (Aggregation Propagation)**: 을지 노드는 자신에게 바로 연결된 하위 자식 노드들의 설비용량과 수요전력을 모두 더하여 `calculatedTotalLoad`와 `calculatedDemandLoad`를 산출합니다.
+   - **전파 동기화 보장 (Critical Link)**: 을지 변압기 자체의 계산 결과가 도출되면, 이 최종 값을 `nodeTotalLoads` 및 `nodeDemandLoads` 맵에 강제로 주입해야 합니다. 이 과정이 없으면 최상위 갑지-노드(HV)가 을지 노드의 부하를 0으로 읽게 되는 심각한 전파 누수가 발생합니다.
+
+3. **갑지 변압기 노드 (HV Node)**
+   - **물리 계통 정합성 필터링 (Connected Aggregation)**: 갑지 계산서 활성화 여부(`hasHvSheet === true`)를 인지하고, 계통에 존재하는 모든 을지를 합산하는 것이 아닌, **실제 갑지에 등록되어 연결선이 렌더링되는 을지 변압기들만 필터링(`connectedTrs`)하여 총부하 및 수용부하를 산출**합니다. 이를 통해 끊어진 변압기의 수치가 갑지에 합산되는 오류를 원천 차단합니다.
+
+4. **발전기 노드 (GENERATOR Node)**
+   - **부하 단위 정상화 (kVA/kW Scale)**: 발전기 계산서의 부하 결과(`totalLoad`, `demandLoad`)는 내부적으로 `VA (W)` 단위를 바탕으로 영속화되므로, 그래프에서 표현하거나 게이지를 연산할 때는 **반드시 1000을 나누어 kVA(kW) 스케일로 정규화**해 주어야 단위 불일치 및 1000배 뻥튀기 버그를 방지할 수 있습니다.
 
 ---
 

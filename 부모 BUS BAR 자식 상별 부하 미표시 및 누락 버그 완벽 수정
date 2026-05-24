@@ -1,0 +1,63 @@
+# 부모 BUS BAR 자식 상별 부하 미표시 및 누락 버그 완벽 수정
+
+## 1. 근본 원인 분석과 추가 결함 해결
+
+이전 작업에서 초기 하이드레이션 결과 등록(`syncPanel` 및 Post-Hydration Effect)을 고도화하고, `getEffectiveCircuit`과 `getAggregateTotals`에서의 런타임 회로 매핑 오류를 1차 해결했음에도 불구하고, **일부 자식 분전반(예: `LP-농산`, `LP-정육` 등)의 상별 부하가 새로고침 시에 여전히 누락(`-`)되는 문제**가 발견되었습니다.
+
+추가 정밀 스캔 결과, 로딩 및 관계 무결성 검증 엔진에서 자식 계산서를 식별하는 필터가 극도로 제한되어 있는 **2차 핵심 결함**을 발견하여 최종 해결하였습니다.
+
+### 1차 원인 (런타임 매핑 및 초기 하이드레이션 누락)
+1. **DB 회로 데이터의 연결 ID 보관 위치**:
+   DB에서 저장/로드할 때, 자식 분전반 연결 ID는 회로 최상위 `connectedPanelId`가 아니라 부하 목록(`c.loads`) 내부 `category === 'PL'`인 부하 항목의 `connectedPanelId`에만 저장됩니다.
+2. **`getEffectiveCircuit`의 반환 누락**:
+   전역 스토어와 화면 렌더링에 실시간 데이터를 병합해주는 `getEffectiveCircuit` 도우미 함수가 가공된 객체를 반환할 때, `connectedPanelId: connId` 필드를 복사하지 않고 누락시켰습니다.
+3. **`getAggregateTotals`에서의 판별 한계**:
+   부모 계산서 하단에서 자식 부하를 재귀적으로 합산하는 `getAggregateTotals` 함수 내에서, 원시(raw) circuit 데이터를 직접 순회할 때 `c.connectedPanelId`만 검사하고 있어 자식 분전반 연결을 식별하지 못했습니다.
+
+### 2차 원인 (자식 계산서 접두사 인식 누락 - 최종 해결)
+* `useDataStore.js`의 `extractChildIds`와 `integrityLogger.js`의 `isValidChildId`에서 자식 계산서 ID를 식별할 때 **`panel-load-`**, **`ups-`**, **`power-load-`**로 시작하는 것만 자식으로 간주하도록 엄격히 가드되어 있었습니다.
+* 실제 현업 DB/로컬 캐시에는 사용자가 명명한 **`lp-`** 또는 **`mcc-`**로 시작하는 접두사(예: `lp-농산`, `lp-정육`)가 존재하였으며, 이 때문에 부모 분전반 로드 시 자식 계산서를 연쇄 로드(`loadPanel`)하는 대상에서 완전히 제외되어 데이터 하이드레이션 누락이 반복되었습니다.
+
+---
+
+## 2. 변경 파일 및 상세 코드 분석
+
+### ① [useDataStore.js](file:///c:/Users/intel/Videos/xampp/htdocs/KECLC/src/store/useDataStore.js) (Step D-1)
+* **목적**: `extractChildIds`에서 자식 계산서 ID 추출 시 `lp-`, `mcc-` 접두사로 시작하는 패널 ID도 자식으로 올바르게 분류하여 부모 로딩 시 연쇄 로드(`loadPanel`)되도록 교정했습니다.
+```diff
+                 return Array.from(ids).filter(id => {
+                     if (!id) return false;
+                     const idStr = String(id).trim();
+-                    return ['panel-load-', 'ups-', 'power-load-'].some(p => idStr.startsWith(p));
++                    return ['panel-load-', 'ups-', 'power-load-', 'lp-', 'mcc-'].some(p => idStr.startsWith(p));
+                 });
+```
+
+### ② [integrityLogger.js](file:///c:/Users/intel/Videos/xampp/htdocs/KECLC/src/utils/integrityLogger.js) (Step D-2)
+* **목적**: 시스템 관계 무결성 정밀 진단 시, `lp-` 및 `mcc-` 접두사를 가진 자식 ID도 유령 자식 참조로 오진하거나 단선으로 처리하지 않고 정상 관계 링크로 인식하도록 보완했습니다.
+```diff
+-const VALID_CHILD_PREFIXES = ['panel-load-', 'ups-', 'power-load-'];
++const VALID_CHILD_PREFIXES = ['panel-load-', 'ups-', 'power-load-', 'lp-', 'mcc-'];
+```
+
+### ③ [PanelLoad/index.jsx](file:///c:/Users/intel/Videos/xampp/htdocs/KECLC/src/components/PanelLoad/index.jsx) (Step C-1, C-3)
+* **`getEffectiveCircuit` 반환 객체에 `connectedPanelId` 명시**:
+```diff
+         return {
+             ...c,
++            connectedPanelId: connId,
+             power: effectivePower,
+             loads: effectiveLoads,
+```
+* **`getAggregateTotals` 자식 연결 판별식 보완**:
+  `loads` 내부의 PL 연결 ID(`connId`)를 fallback으로 파악하여 재귀적 부하 합산이 정상 작동하도록 보완했습니다.
+
+### ④ [CircuitTable.jsx](file:///c:/Users/intel/Videos/xampp/htdocs/KECLC/src/components/PanelLoad/sections/CircuitTable.jsx) (Step C-2)
+* **`getEffectiveCircuit` 반환 객체에 `connectedPanelId` 명시**: 테이블 렌더링 시 매핑되는 데이터 객체에도 `connectedPanelId`를 명확하게 복사하여 화면상 불평형 부하 취합 시 연결 ID가 누락되지 않도록 보정했습니다.
+
+---
+
+## 3. 수정 결과 및 기대 효과
+
+* **자가 동작 완벽 하이드레이션 완성**: 이제 부모 패널을 처음 로드하거나 F5 새로고침을 하더라도, `lp-`와 `mcc-` 계열의 자식 계산서들을 자동으로 식별하여 연쇄 로딩하고 메모리에 성공적으로 올립니다.
+* **사용자 액션 의존성 완전 탈피**: 자식 패널 탭이 닫혀 있든, 자식 패널의 상 위치를 억지로 변경하지 않든 간에 부모 BUS BAR와 하단 부하 합계에 자식 패널의 L1/L2/L3 불평형 상별 부하가 완벽하게 실시간 누계되어 표시됩니다!

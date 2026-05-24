@@ -150,6 +150,12 @@ switch ($method) {
             $panels_to_delete = array_diff($existing_panel_ids, $new_panel_ids);
             if (!empty($panels_to_delete)) {
                 $placeholders = implode(',', array_fill(0, count($panels_to_delete), '?'));
+                
+                // 1) First delete from panel_connections where parent_panel_id IN (...) OR child_panel_id IN (...)
+                $stmt = $pdo->prepare("DELETE FROM panel_connections WHERE project_id = ? AND (parent_panel_id IN ($placeholders) OR child_panel_id IN ($placeholders))");
+                $stmt->execute(array_merge([$id], $panels_to_delete, $panels_to_delete));
+                
+                // 2) Then delete from panels
                 $stmt = $pdo->prepare("DELETE FROM panels WHERE project_id = ? AND id IN ($placeholders)");
                 $stmt->execute(array_merge([$id], $panels_to_delete));
             }

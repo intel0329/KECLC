@@ -65,6 +65,19 @@ switch ($method) {
         }
         break;
 
+    case 'DELETE':
+        $panelId = $_GET['panel_id'] ?? null;
+        if (!$panelId) sendError("panel_id required");
+
+        try {
+            $stmt = $pdo->prepare("DELETE FROM panel_connections WHERE parent_panel_id = ? OR child_panel_id = ?");
+            $stmt->execute([$panelId, $panelId]);
+            sendSuccess(["status" => "deleted", "affected_rows" => $stmt->rowCount()]);
+        } catch (Exception $e) {
+            sendError("Database error: " . $e->getMessage(), 500);
+        }
+        break;
+
     default:
         sendError("Method not allowed", 405);
 }
