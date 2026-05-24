@@ -147,6 +147,7 @@ export const CircuitTable = (props) => {
 
                                 return {
                                     ...c,
+                                    connectedPanelId: connId,
                                     power: effectivePower,
                                     loads: effectiveLoads,
                                     type: childData.projectInfo.mainBreakerType || c.type || 'MCCB',
@@ -220,6 +221,37 @@ export const CircuitTable = (props) => {
                                 phaseL2 = leftContrib.l2 + rightContrib.l2;
                                 phaseL3 = leftContrib.l3 + rightContrib.l3;
                             }
+
+                            const checkDemandFactorApplied = (circuit) => {
+                                if (!circuit) return false;
+                                if (circuit.demandFactor !== undefined && circuit.demandFactor !== null && circuit.demandFactor !== '' && Number(circuit.demandFactor) < 100) {
+                                    return true;
+                                }
+                                if (circuit.connectedPanelId && panelsData) {
+                                    const childPanel = panelsData[circuit.connectedPanelId];
+                                    if (childPanel?.projectInfo?.demandFactor !== undefined && childPanel?.projectInfo?.demandFactor !== null && childPanel?.projectInfo?.demandFactor !== '' && Number(childPanel.projectInfo.demandFactor) < 100) {
+                                        return true;
+                                    }
+                                }
+                                if (circuit.loads && panelsData) {
+                                    const hasPLChildWithDf = circuit.loads.some(l => {
+                                        if (l.category === 'PL' && l.connectedPanelId) {
+                                            const childPanel = panelsData[l.connectedPanelId];
+                                            if (childPanel?.projectInfo?.demandFactor !== undefined && childPanel?.projectInfo?.demandFactor !== null && childPanel?.projectInfo?.demandFactor !== '' && Number(childPanel.projectInfo.demandFactor) < 100) {
+                                                return true;
+                                            }
+                                        }
+                                        if (l.demandFactor !== undefined && l.demandFactor !== null && l.demandFactor !== '' && Number(l.demandFactor) < 100) {
+                                            return true;
+                                        }
+                                        return false;
+                                    });
+                                    if (hasPLChildWithDf) return true;
+                                }
+                                return false;
+                            };
+
+                            const isDfApplied = checkDemandFactorApplied(left) || checkDemandFactorApplied(right);
 
                             // Determine occupancy (which phases should show a marker if load is 0)
                             const getOccupancy = (circuit) => {
@@ -482,7 +514,7 @@ export const CircuitTable = (props) => {
                                                     </td>
                                                     <td
                                                         rowSpan={hasData ? 2 : 1}
-                                                        className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                        className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                         onClick={() => {
                                                             if (left && Number(left.p) === 2) updateCircuit('left', left.id, 'phaseLine', 'L1');
                                                             else if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L1');
@@ -496,7 +528,7 @@ export const CircuitTable = (props) => {
                                                     </td>
                                                     <td
                                                         rowSpan={hasData ? 2 : 1}
-                                                        className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                        className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                         onClick={() => {
                                                             if (left && Number(left.p) === 2) updateCircuit('left', left.id, 'phaseLine', 'L2');
                                                             else if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L2');
@@ -510,7 +542,7 @@ export const CircuitTable = (props) => {
                                                     </td>
                                                     <td
                                                         rowSpan={hasData ? 2 : 1}
-                                                        className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                        className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] border-t-2 border-b-2 border-blue-500/20 ${(left?.p == 2 || right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                         onClick={() => {
                                                             if (left && Number(left.p) === 2) updateCircuit('left', left.id, 'phaseLine', 'L3');
                                                             else if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L3');
@@ -545,7 +577,7 @@ export const CircuitTable = (props) => {
                                                 ></td>
                                                 <td
                                                     rowSpan={hasData ? 2 : 1}
-                                                    className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                    className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                     onClick={() => {
                                                         if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L1');
                                                     }}
@@ -558,7 +590,7 @@ export const CircuitTable = (props) => {
                                                 </td>
                                                 <td
                                                     rowSpan={hasData ? 2 : 1}
-                                                    className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                    className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                     onClick={() => {
                                                         if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L2');
                                                     }}
@@ -571,7 +603,7 @@ export const CircuitTable = (props) => {
                                                 </td>
                                                 <td
                                                     rowSpan={hasData ? 2 : 1}
-                                                    className={`border-r border-gray-900 p-0 text-center text-white text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
+                                                    className={`border-r border-gray-900 p-0 text-center ${isDfApplied ? 'text-blue-400 font-bold' : 'text-white'} text-[12px] min-w-[70px] h-[48px] border-t-2 border-b-2 border-blue-500/20 ${(right?.p == 2) ? 'cursor-pointer hover:bg-blue-500/10' : ''}`}
                                                     onClick={() => {
                                                         if (right && Number(right.p) === 2) updateCircuit('right', right.id, 'phaseLine', 'L3');
                                                     }}
@@ -946,7 +978,7 @@ export const CircuitTable = (props) => {
                         })}
                         {/* Phase Raw Load Summary (수용률 미적용 순수 설비 합계) - UI 표시 전용, 계산 로직 무관 */}
                         <tr className="bg-black font-bold border-t-2 border-blue-500/20">
-                            <td colSpan={16} className="border-r border-gray-900 p-2"></td>
+                            <td colSpan={16} className="border-r border-gray-900 p-2 text-right pr-4 text-[11px] text-[#d1d5db]">상별 총부하</td>
                             <td className="border-r border-gray-900 p-2 text-center text-[11px] text-[#d1d5db]">
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L1' ? Math.round(phaseTotals.rawL1 || 0).toLocaleString() : '')
@@ -966,7 +998,7 @@ export const CircuitTable = (props) => {
                         </tr>
                         {/* Phase Load Summary (수용률 적용 합계) */}
                         <tr className="bg-black font-bold border-t border-gray-800">
-                            <td colSpan={16} className="border-r border-gray-900 p-2"></td>
+                            <td colSpan={16} className="border-r border-gray-900 p-2 text-right pr-4 text-[11px] text-blue-400">상별 수용률</td>
                             <td className="border-r border-gray-900 p-2 text-center text-[11px] text-blue-400">
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L1' ? Math.round(phaseTotals.l1).toLocaleString() : '')
@@ -985,7 +1017,7 @@ export const CircuitTable = (props) => {
                             <td colSpan={16} className="border-r border-gray-900 p-2"></td>
                         </tr>
                         <tr className="bg-black font-bold border-b-2 border-blue-500/20">
-                            <td colSpan={16} className="border-r border-gray-900 p-2"></td>
+                            <td colSpan={16} className="border-r border-gray-900 p-2 text-right pr-4 text-[11px] text-green-400">상별 불평형</td>
                             <td className={`border-r border-gray-900 p-2 text-center text-[11px] ${imbalanceColor}`}>
                                 {projectInfo.phase === '1Ø-2W'
                                     ? (selectedPhaseLine === 'L1' ? '100%' : '')

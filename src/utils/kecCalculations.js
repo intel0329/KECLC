@@ -887,3 +887,165 @@ export const calculatePanelTotalLoad = (data) => {
 
     return Math.round(totalVA);
 };
+
+/**
+ * [Store Self-Calculation Engine]
+ * 컴포넌트 없이 스토어 단에서 단일 패널의 상별 부하(phaseTotals)를 계산한다.
+ * - 재귀 없이 단일 패널의 회로만 처리 (자식 패널은 cachedPhaseTotals 또는 cachedTotalLoad를 fallback으로 사용)
+ * - useDataStore.js의 loadPanel 내부에서 안전하게 호출 가능
+ *
+ * @param {Array} leftCircuits - 좌측 회로 배열
+ * @param {Array} rightCircuits - 우측 회로 배열
+ * @param {Object} projectInfo - 패널 정보 (phase, selectedPhaseLine, demandFactor)
+ * @param {Object} panelsDataSnapshot - 전역 panelsData 스냅샷 (자식 패널의 캐시 참조용)
+ * @param {Object} resultsSnapshot - 전역 results 스냅샷 (자식 패널의 실시간 결과 참조용)
+ * @returns {Object} phaseTotals { l1, l2, l3, i1, i2, i3, rawL1, rawL2, rawL3, rawI1, rawI2, rawI3 }
+ */
+export const calculatePhaseTotals = (leftCircuits, rightCircuits, projectInfo, panelsDataSnapshot = {}, resultsSnapshot = {}) => {
+    if (!projectInfo) return { l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0, rawL1: 0, rawL2: 0, rawL3: 0, rawI1: 0, rawI2: 0, rawI3: 0 };
+
+    const normalizePhase = (phase) => {
+        if (!phase) return '3Ø-4W';
+        return phase.replace('Φ', 'Ø').replace('-', '').toUpperCase();
+    };
+
+    const isSinglePhase = normalizePhase(projectInfo.phase).includes('1Ø2W');
+    const selPhase = projectInfo.selectedPhaseLine || 'L1';
+    const allCircuits = [...(leftCircuits || []), ...(rightCircuits || [])];
+
+    let l1 = 0, l2 = 0, l3 = 0, i1 = 0, i2 = 0, i3 = 0;
+    let rawL1 = 0, rawL2 = 0, rawL3 = 0, rawI1 = 0, rawI2 = 0, rawI3 = 0;
+
+    allCircuits.forEach(c => {
+        const cleanNum = (val) => Number(String(val || '').replace(/,/g, '')) || 0;
+
+        // 자식 패널 연결 회로인 경우: 자식의 결과를 우선 참조
+        const connId = c.connectedPanelId || c.loads?.find(l => l.category === 'PL')?.connectedPanelId;
+        if (connId) {
+            // 1순위: 전역 results 스냅샷 (실시간 계산 결과)
+            const subResult = resultsSnapshot[connId];
+            if (subResult?.phaseTotals) {
+                const pt = subResult.phaseTotals;
+                const pStr = String(c.p || c.phase || '4');
+                const p = (pStr.includes('2') && !pStr.includes('4')) ? 2 : 4;
+
+                if (p === 2) {
+                    // 단상 자식: 총합을 지정된 상으로 집약
+                    const totalSubDem = (pt.l1 || 0) + (pt.l2 || 0) + (pt.l3 || 0);
+                    const totalSubRaw = (pt.rawL1 || pt.l1 || 0) + (pt.rawL2 || pt.l2 || 0) + (pt.rawL3 || pt.l3 || 0);
+                    const demCurr = totalSubDem / 220;
+                    const rawCurr = totalSubRaw / 220;
+                    const pl = c.phaseLine || 'L1';
+                    if (pl === 'L1') { l1 += totalSubDem; i1 += demCurr; rawL1 += totalSubRaw; rawI1 += rawCurr; }
+                    else if (pl === 'L2') { l2 += totalSubDem; i2 += demCurr; rawL2 += totalSubRaw; rawI2 += rawCurr; }
+                    else if (pl === 'L3') { l3 += totalSubDem; i3 += demCurr; rawL3 += totalSubRaw; rawI3 += rawCurr; }
+                } else {
+                    // 3상 자식: 상별 분포 그대로 흡수
+                    l1 += pt.l1 || 0; l2 += pt.l2 || 0; l3 += pt.l3 || 0;
+                    i1 += pt.i1 || 0; i2 += pt.i2 || 0; i3 += pt.i3 || 0;
+                    rawL1 += pt.rawL1 || pt.l1 || 0; rawL2 += pt.rawL2 || pt.l2 || 0; rawL3 += pt.rawL3 || pt.l3 || 0;
+                    rawI1 += pt.rawI1 || pt.i1 || 0; rawI2 += pt.rawI2 || pt.i2 || 0; rawI3 += pt.rawI3 || pt.i3 || 0;
+                }
+                return;
+            }
+
+            // 2순위: panelsData 스냅샷의 cachedPhaseTotals
+            const childData = panelsDataSnapshot[connId];
+            if (childData?.projectInfo?.cachedPhaseTotals) {
+                const pt = childData.projectInfo.cachedPhaseTotals;
+                const pStr = String(c.p || c.phase || '4');
+                const p = (pStr.includes('2') && !pStr.includes('4')) ? 2 : 4;
+
+                if (p === 2) {
+                    const totalSubDem = (pt.l1 || 0) + (pt.l2 || 0) + (pt.l3 || 0);
+                    const totalSubRaw = (pt.rawL1 || pt.l1 || 0) + (pt.rawL2 || pt.l2 || 0) + (pt.rawL3 || pt.l3 || 0);
+                    const demCurr = totalSubDem / 220;
+                    const rawCurr = totalSubRaw / 220;
+                    const pl = c.phaseLine || 'L1';
+                    if (pl === 'L1') { l1 += totalSubDem; i1 += demCurr; rawL1 += totalSubRaw; rawI1 += rawCurr; }
+                    else if (pl === 'L2') { l2 += totalSubDem; i2 += demCurr; rawL2 += totalSubRaw; rawI2 += rawCurr; }
+                    else if (pl === 'L3') { l3 += totalSubDem; i3 += demCurr; rawL3 += totalSubRaw; rawI3 += rawCurr; }
+                } else {
+                    l1 += pt.l1 || 0; l2 += pt.l2 || 0; l3 += pt.l3 || 0;
+                    i1 += pt.i1 || 0; i2 += pt.i2 || 0; i3 += pt.i3 || 0;
+                    rawL1 += pt.rawL1 || pt.l1 || 0; rawL2 += pt.rawL2 || pt.l2 || 0; rawL3 += pt.rawL3 || pt.l3 || 0;
+                    rawI1 += pt.rawI1 || pt.i1 || 0; rawI2 += pt.rawI2 || pt.i2 || 0; rawI3 += pt.rawI3 || pt.i3 || 0;
+                }
+                return;
+            }
+
+            // 3순위: cachedTotalLoad를 3상 균등 배분 fallback
+            const cachedLoad = childData?.projectInfo?.cachedTotalLoad || cleanNum(c.power);
+            if (cachedLoad > 0) {
+                const pStr = String(c.p || c.phase || '4');
+                const p = (pStr.includes('2') && !pStr.includes('4')) ? 2 : 4;
+                if (p === 2) {
+                    const curr = cachedLoad / 220;
+                    const pl = c.phaseLine || 'L1';
+                    if (pl === 'L1') { l1 += cachedLoad; i1 += curr; rawL1 += cachedLoad; rawI1 += curr; }
+                    else if (pl === 'L2') { l2 += cachedLoad; i2 += curr; rawL2 += cachedLoad; rawI2 += curr; }
+                    else if (pl === 'L3') { l3 += cachedLoad; i3 += curr; rawL3 += cachedLoad; rawI3 += curr; }
+                } else {
+                    const share = cachedLoad / 3;
+                    const curr = cachedLoad / (380 * Math.sqrt(3));
+                    l1 += share; l2 += share; l3 += share;
+                    i1 += curr; i2 += curr; i3 += curr;
+                    rawL1 += share; rawL2 += share; rawL3 += share;
+                    rawI1 += curr; rawI2 += curr; rawI3 += curr;
+                }
+            }
+            return;
+        }
+
+        // 일반 회로 (직접 입력)
+        let rawPwr = cleanNum(c.power) || cleanNum(c.va) || 0;
+        if (!rawPwr && c.loads) {
+            rawPwr = c.loads.reduce((sum, l) => sum + ((Number(l.qty) || 0) * (Number(l.va) || 0)), 0);
+        }
+        if (rawPwr === 0) return;
+
+        // 수용률 적용
+        let demPwr = rawPwr;
+        const validLoads = (c.loads || []).filter(l => l.category !== 'PL' && Number(l.qty) > 0 && Number(l.va) > 0);
+        if (validLoads.length > 0) {
+            demPwr = validLoads.reduce((sum, l) => sum + ((Number(l.qty) || 0) * (Number(l.va) || 0) * ((l.demandFactor === undefined ? 100 : Number(l.demandFactor)) / 100)), 0);
+        } else {
+            demPwr = rawPwr * ((c.demandFactor === undefined ? 100 : Number(c.demandFactor)) / 100);
+        }
+
+        const pStr = String(c.p || c.phase || '4');
+        const p = (pStr.includes('2') && !pStr.includes('4')) ? 2 : 4;
+
+        if (isSinglePhase) {
+            const demCurr = demPwr / 220;
+            const rawCurr = rawPwr / 220;
+            if (selPhase === 'L1') { l1 += demPwr; i1 += demCurr; rawL1 += rawPwr; rawI1 += rawCurr; }
+            else if (selPhase === 'L2') { l2 += demPwr; i2 += demCurr; rawL2 += rawPwr; rawI2 += rawCurr; }
+            else if (selPhase === 'L3') { l3 += demPwr; i3 += demCurr; rawL3 += rawPwr; rawI3 += rawCurr; }
+        } else if (p === 2) {
+            const demCurr = demPwr / 220;
+            const rawCurr = rawPwr / 220;
+            const pl = c.phaseLine || 'L1';
+            if (pl === 'L1') { l1 += demPwr; i1 += demCurr; rawL1 += rawPwr; rawI1 += rawCurr; }
+            else if (pl === 'L2') { l2 += demPwr; i2 += demCurr; rawL2 += rawPwr; rawI2 += rawCurr; }
+            else if (pl === 'L3') { l3 += demPwr; i3 += demCurr; rawL3 += rawPwr; rawI3 += rawCurr; }
+        } else {
+            const demShare = demPwr / 3;
+            const rawShare = rawPwr / 3;
+            const demCurr = demPwr / (380 * Math.sqrt(3));
+            const rawCurr = rawPwr / (380 * Math.sqrt(3));
+            l1 += demShare; l2 += demShare; l3 += demShare;
+            i1 += demCurr; i2 += demCurr; i3 += demCurr;
+            rawL1 += rawShare; rawL2 += rawShare; rawL3 += rawShare;
+            rawI1 += rawCurr; rawI2 += rawCurr; rawI3 += rawCurr;
+        }
+    });
+
+    const r = (v) => Math.round(v * 10000) / 10000;
+    return {
+        l1: r(l1), l2: r(l2), l3: r(l3),
+        i1: r(i1), i2: r(i2), i3: r(i3),
+        rawL1: r(rawL1), rawL2: r(rawL2), rawL3: r(rawL3),
+        rawI1: r(rawI1), rawI2: r(rawI2), rawI3: r(rawI3)
+    };
+};

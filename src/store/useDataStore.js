@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import projectService from '../services/projectService';
+import { calculatePanelTotalLoad, calculatePhaseTotals } from '../utils/kecCalculations';
 
 /**
  * SSOT (Single Source of Truth) Store
@@ -151,7 +152,7 @@ const useDataStore = create((set, get) => {
                     console.warn(`[SYNC] Failed to clear local cache for deleted panel ${panelId}:`, e);
                 }
 
-                // 2. Zustand 메모리 스토어 상태 청소
+                // 2. Zustand 메모리 스토어 상태 청소 및 부모 연쇄 청소 (타 탭 수신 가드: 절대로 서버 API 호출 금지)
                 set(state => {
                     const newPanels = { ...state.panels };
                     delete newPanels[panelId];
@@ -159,12 +160,100 @@ const useDataStore = create((set, get) => {
                     const newResults = { ...state.results };
                     delete newResults[panelId];
 
-                    // connections 맵에서도 해당 childId(또는 parentId)와 연계된 관계 제거
                     const newConnections = { ...state.panelConnections };
                     delete newConnections[panelId];
                     Object.keys(newConnections).forEach(k => {
                         if (newConnections[k] === panelId) {
                             delete newConnections[k];
+                        }
+                    });
+
+                    // 모든 패널 데이터 순회하며 연쇄 청소 스캔
+                    Object.keys(newPanels).forEach(pId => {
+                        const panel = { ...newPanels[pId] };
+                        let isChanged = false;
+
+                        // 분전반 부하 (leftCircuits, rightCircuits)
+                        const sides = ['leftCircuits', 'rightCircuits'];
+                        sides.forEach(side => {
+                            if (Array.isArray(panel[side])) {
+                                panel[side] = panel[side].map(circuit => {
+                                    let cChanged = false;
+                                    const updatedCircuit = { ...circuit };
+
+                                    if (updatedCircuit.connectedPanelId === panelId) {
+                                        updatedCircuit.connectedPanelId = null;
+                                        if (updatedCircuit.power !== undefined) updatedCircuit.power = 0;
+                                        if (updatedCircuit.va !== undefined) updatedCircuit.va = 0;
+                                        cChanged = true;
+                                    }
+
+                                    if (Array.isArray(updatedCircuit.loads)) {
+                                        updatedCircuit.loads = updatedCircuit.loads.map(load => {
+                                            if (load.connectedPanelId === panelId) {
+                                                const updatedLoad = { ...load, connectedPanelId: null };
+                                                if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                                if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                                cChanged = true;
+                                                return updatedLoad;
+                                            }
+                                            return load;
+                                        });
+                                    }
+
+                                    if (cChanged) {
+                                        isChanged = true;
+                                        return updatedCircuit;
+                                    }
+                                    return circuit;
+                                });
+                            }
+                        });
+
+                        // 동력 부하 및 UPS 계산서 (powerLoads)
+                        if (Array.isArray(panel.powerLoads)) {
+                            panel.powerLoads = panel.powerLoads.map(load => {
+                                let lChanged = false;
+                                const updatedLoad = { ...load };
+
+                                if (updatedLoad.connectedPanelId === panelId) {
+                                    updatedLoad.connectedPanelId = null;
+                                    if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                    if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                    lChanged = true;
+                                }
+
+                                if (updatedLoad.bankId === panelId) {
+                                    updatedLoad.bankId = null;
+                                    if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                    if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                    lChanged = true;
+                                }
+
+                                if (lChanged) {
+                                    isChanged = true;
+                                    return updatedLoad;
+                                }
+                                return load;
+                            });
+                        }
+
+                        if (isChanged) {
+                            const totalLoad = calculatePanelTotalLoad(panel);
+                            panel.projectInfo = {
+                                ...panel.projectInfo,
+                                cachedTotalLoad: totalLoad
+                            };
+                            newPanels[pId] = panel;
+                            newResults[pId] = {
+                                ...(newResults[pId] || {}),
+                                totalLoad: totalLoad
+                            };
+                            backupToLocal(pId, panel);
+                            // 부모 패널 부하 재계산 연쇄 트리거: Connections Changed 이벤트를 비동기로 발송하여 UI 즉시 갱신
+                            setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent('kelc_connections_changed', { detail: { panelId: pId } }));
+                            }, 0);
                         }
                     });
 
@@ -303,6 +392,39 @@ const useDataStore = create((set, get) => {
         loadPanel: async (panelId) => {
             if (!panelId) return null;
 
+            const extractChildIds = (data) => {
+                const ids = new Set();
+                if (!data) return [];
+                
+                // 좌/우측 회로 및 중첩 부하(loads) 내부의 모든 자식 ID 딥스캔
+                ['leftCircuits', 'rightCircuits'].forEach(side => {
+                    if (Array.isArray(data[side])) {
+                        data[side].forEach(c => {
+                            if (c.connectedPanelId) ids.add(c.connectedPanelId);
+                            if (Array.isArray(c.loads)) {
+                                c.loads.forEach(l => {
+                                    if (l.connectedPanelId) ids.add(l.connectedPanelId);
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                // 동력 부하 및 UPS 연동 ID(connectedPanelId, bankId) 스캔
+                if (Array.isArray(data.powerLoads)) {
+                    data.powerLoads.forEach(l => {
+                        if (l.connectedPanelId) ids.add(l.connectedPanelId);
+                        if (l.bankId) ids.add(l.bankId);
+                    });
+                }
+                
+                return Array.from(ids).filter(id => {
+                    if (!id) return false;
+                    const idStr = String(id).trim();
+                    return ['panel-load-', 'ups-', 'power-load-', 'lp-', 'mcc-'].some(p => idStr.startsWith(p));
+                });
+            };
+
             const { panels, activeProjectId } = get();
             
             // 1. [Tier 0] Memory-First: 이미 메모리에 있으면 즉시 반환
@@ -322,9 +444,52 @@ const useDataStore = create((set, get) => {
             // LocalStorage에 데이터가 있고, 상태가 DIRTY 또는 LOCAL_SAVED라면 로컬을 100% 신뢰
             if (cachedData && (cachedData.status === 'DIRTY' || cachedData.status === 'LOCAL_SAVED')) {
                 console.log(`[Hydration] Local-First: Trusting Local Cache (${cachedData.status}) for ${panelId}`);
+                
+                // [Self-Calculation Engine] cachedPhaseTotals가 있으면 그대로 사용, 없으면 회로 데이터로 직접 계산
+                const { panels: panelsSnap, results: resultsSnap } = get();
+                const computedPhaseTotals = cachedData?.projectInfo?.cachedPhaseTotals ||
+                    calculatePhaseTotals(
+                        cachedData.leftCircuits || [],
+                        cachedData.rightCircuits || [],
+                        cachedData.projectInfo || {},
+                        panelsSnap,
+                        resultsSnap
+                    );
+                
                 set(state => ({
-                    panels: { ...state.panels, [panelId]: cachedData }
+                    panels: { ...state.panels, [panelId]: cachedData },
+                    results: {
+                        ...state.results,
+                        [panelId]: state.results[panelId] || { 
+                            totalLoad: calculatePanelTotalLoad(cachedData),
+                            phaseTotals: computedPhaseTotals
+                        }
+                    }
                 }));
+                // [연쇄 로드] 자식 패널 로드 후 부모 결과를 재계산하여 phaseTotals 갱신
+                const childIds = extractChildIds(cachedData);
+                if (childIds.length > 0) {
+                    Promise.all(childIds.map(cId => get().loadPanel(cId))).then(() => {
+                        const { panels: pSnap, results: rSnap } = get();
+                        const refreshedPhaseTotals = calculatePhaseTotals(
+                            cachedData.leftCircuits || [],
+                            cachedData.rightCircuits || [],
+                            cachedData.projectInfo || {},
+                            pSnap,
+                            rSnap
+                        );
+                        set(state => ({
+                            results: {
+                                ...state.results,
+                                [panelId]: {
+                                    ...(state.results[panelId] || {}),
+                                    phaseTotals: refreshedPhaseTotals
+                                }
+                            }
+                        }));
+                        window.dispatchEvent(new CustomEvent('kelc_results_updated', { detail: { panelId } }));
+                    });
+                }
                 return cachedData;
             }
 
@@ -350,12 +515,55 @@ const useDataStore = create((set, get) => {
                         status: remoteData.status || fallbackStatus 
                     };
                     
+                    // [Self-Calculation Engine] cachedPhaseTotals가 있으면 그대로 사용, 없으면 회로 데이터로 직접 계산
+                    const { panels: panelsSnap, results: resultsSnap } = get();
+                    const computedPhaseTotals = finalData?.projectInfo?.cachedPhaseTotals ||
+                        calculatePhaseTotals(
+                            finalData.leftCircuits || [],
+                            finalData.rightCircuits || [],
+                            finalData.projectInfo || {},
+                            panelsSnap,
+                            resultsSnap
+                        );
+
                     set(state => ({
-                        panels: { ...state.panels, [panelId]: finalData }
+                        panels: { ...state.panels, [panelId]: finalData },
+                        results: {
+                            ...state.results,
+                            [panelId]: state.results[panelId] || { 
+                                totalLoad: calculatePanelTotalLoad(finalData),
+                                phaseTotals: computedPhaseTotals
+                            }
+                        }
                     }));
                     
                     // 로컬 캐시도 동기화
                     backupToLocal(panelId, finalData);
+                    
+                    // [연쇄 로드] 자식 패널 로드 후 부모 결과를 재계산하여 phaseTotals 갱신
+                    const childIds = extractChildIds(finalData);
+                    if (childIds.length > 0) {
+                        Promise.all(childIds.map(cId => get().loadPanel(cId))).then(() => {
+                            const { panels: pSnap, results: rSnap } = get();
+                            const refreshedPhaseTotals = calculatePhaseTotals(
+                                finalData.leftCircuits || [],
+                                finalData.rightCircuits || [],
+                                finalData.projectInfo || {},
+                                pSnap,
+                                rSnap
+                            );
+                            set(state => ({
+                                results: {
+                                    ...state.results,
+                                    [panelId]: {
+                                        ...(state.results[panelId] || {}),
+                                        phaseTotals: refreshedPhaseTotals
+                                    }
+                                }
+                            }));
+                            window.dispatchEvent(new CustomEvent('kelc_results_updated', { detail: { panelId } }));
+                        });
+                    }
                     return finalData;
                 }
             } catch (error) {
@@ -627,7 +835,7 @@ const useDataStore = create((set, get) => {
         /**
          * [NEW] 계산서 삭제 시 본인 탭 상태 청소 및 타 탭 브로드캐스트 전파
          */
-        deletePanelState: (panelId) => {
+        deletePanelState: async (panelId) => {
             if (!panelId) return;
 
             // 1. 본인 탭의 로컬 캐시 제거 (이미 projectService에서 지웠지만 안전장치로 추가 실행)
@@ -635,7 +843,9 @@ const useDataStore = create((set, get) => {
                 localStorage.removeItem(`kelc_panel_cache_${panelId}`);
             } catch (e) {}
 
-            // 2. Zustand 메모리 스토어 상태 제거
+            const affectedParentIds = [];
+
+            // 2. Zustand 메모리 스토어 상태 제거 및 부모 연쇄 청소
             set(state => {
                 const newPanels = { ...state.panels };
                 delete newPanels[panelId];
@@ -651,6 +861,91 @@ const useDataStore = create((set, get) => {
                     }
                 });
 
+                // 모든 패널 데이터 순회하며 연쇄 청소 스캔
+                Object.keys(newPanels).forEach(pId => {
+                    const panel = { ...newPanels[pId] };
+                    let isChanged = false;
+
+                    // 분전반 부하 (leftCircuits, rightCircuits)
+                    const sides = ['leftCircuits', 'rightCircuits'];
+                    sides.forEach(side => {
+                        if (Array.isArray(panel[side])) {
+                            panel[side] = panel[side].map(circuit => {
+                                let cChanged = false;
+                                const updatedCircuit = { ...circuit };
+
+                                if (updatedCircuit.connectedPanelId === panelId) {
+                                    updatedCircuit.connectedPanelId = null;
+                                    if (updatedCircuit.power !== undefined) updatedCircuit.power = 0;
+                                    if (updatedCircuit.va !== undefined) updatedCircuit.va = 0;
+                                    cChanged = true;
+                                }
+
+                                if (Array.isArray(updatedCircuit.loads)) {
+                                    updatedCircuit.loads = updatedCircuit.loads.map(load => {
+                                        if (load.connectedPanelId === panelId) {
+                                            const updatedLoad = { ...load, connectedPanelId: null };
+                                            if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                            if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                            cChanged = true;
+                                            return updatedLoad;
+                                        }
+                                        return load;
+                                    });
+                                }
+
+                                if (cChanged) {
+                                    isChanged = true;
+                                    return updatedCircuit;
+                                }
+                                return circuit;
+                            });
+                        }
+                    });
+
+                    // 동력 부하 및 UPS 계산서 (powerLoads)
+                    if (Array.isArray(panel.powerLoads)) {
+                        panel.powerLoads = panel.powerLoads.map(load => {
+                            let lChanged = false;
+                            const updatedLoad = { ...load };
+
+                            if (updatedLoad.connectedPanelId === panelId) {
+                                updatedLoad.connectedPanelId = null;
+                                if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                lChanged = true;
+                            }
+
+                            if (updatedLoad.bankId === panelId) {
+                                updatedLoad.bankId = null;
+                                if (updatedLoad.power !== undefined) updatedLoad.power = 0;
+                                if (updatedLoad.va !== undefined) updatedLoad.va = 0;
+                                lChanged = true;
+                            }
+
+                            if (lChanged) {
+                                isChanged = true;
+                                return updatedLoad;
+                            }
+                            return load;
+                        });
+                    }
+                    if (isChanged) {
+                        const totalLoad = calculatePanelTotalLoad(panel);
+                        panel.projectInfo = {
+                            ...panel.projectInfo,
+                            cachedTotalLoad: totalLoad
+                        };
+                        newPanels[pId] = panel;
+                        newResults[pId] = {
+                            ...(newResults[pId] || {}),
+                            totalLoad: totalLoad
+                        };
+                        backupToLocal(pId, panel);
+                        affectedParentIds.push(pId);
+                    }
+                });
+
                 return { 
                     panels: newPanels, 
                     results: newResults,
@@ -662,6 +957,72 @@ const useDataStore = create((set, get) => {
             window.dispatchEvent(new CustomEvent('kelc_connections_changed', { detail: { panelId } }));
             window.dispatchEvent(new CustomEvent('kelc_panel_deleted', { detail: { panelId } }));
             window.dispatchEvent(new Event('kelc_project_info_updated'));
+
+            // [본인 탭 전용 서버 저장 가드] 삭제를 직접 집행한 본인 탭에서만 부모 계산서들의 변경사항을 서버 DB 및 캐시에 영구 저장
+            if (affectedParentIds.length > 0) {
+                const activeProjectId = get().activeProjectId;
+                for (const parentId of affectedParentIds) {
+                    const updatedData = get().panels[parentId];
+                    if (updatedData && activeProjectId) {
+                        try {
+                            const originKey = `kelc_panel_data_${parentId}`;
+                            const draftKey = `kelc_panel_draft_${parentId}`;
+                            
+                            // 탭간 실시간 동기화를 위해 다른 탭에도 전파 (리액티브 재계산 연쇄 트리거)
+                            bc.postMessage({ 
+                                type: 'UPDATE_PANEL', 
+                                payload: { panelId: parentId, data: updatedData },
+                                senderId: TAB_ID 
+                            });
+
+                            // [ZERO SYNC] 부하 재계산 결과도 실시간 전송
+                            bc.postMessage({
+                                type: 'UPDATE_RESULTS',
+                                payload: { panelId: parentId, result: { totalLoad: updatedData.projectInfo?.cachedTotalLoad || 0 } },
+                                senderId: TAB_ID
+                            });
+
+                            // 부모 패널의 무결성/부하 계산 재검증 트리거
+                            window.dispatchEvent(new CustomEvent('kelc_connections_changed', { detail: { panelId: parentId } }));
+
+                            // 1) 서버 Origin에 백필(Auto-save) 저장
+                            await projectService.setRemoteData(activeProjectId, originKey, { 
+                                ...updatedData, 
+                                status: 'SERVER_SYNCED' 
+                            });
+                            
+                            // 2) 서버 Draft가 존재할 경우 제거하여 데이터 일관성 획득
+                            await projectService.removeRemoteData(draftKey, activeProjectId).catch(() => {});
+
+                            // 3) 부모 패널의 DB connections 정보도 동기화 갱신
+                            const connections = [];
+                            if (Array.isArray(updatedData.powerLoads)) {
+                                updatedData.powerLoads.forEach(l => {
+                                    if (l.connectedPanelId) connections.push({ child_panel_id: String(l.connectedPanelId) });
+                                });
+                            }
+                            const sides = ['leftCircuits', 'rightCircuits'];
+                            sides.forEach(side => {
+                                if (Array.isArray(updatedData[side])) {
+                                    updatedData[side].forEach(c => {
+                                        if (c.connectedPanelId) connections.push({ child_panel_id: String(c.connectedPanelId) });
+                                        if (Array.isArray(c.loads)) {
+                                            c.loads.forEach(l => {
+                                                if (l.connectedPanelId) connections.push({ child_panel_id: String(l.connectedPanelId) });
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+
+                            await projectService.savePanelConnections(activeProjectId, parentId, connections);
+
+                        } catch (err) {
+                            console.error(`[Cascading Clean] Failed to auto-save affected parent panel ${parentId}:`, err);
+                        }
+                    }
+                }
+            }
 
             // 4. 타 탭으로 PANEL_DELETED 브로드캐스트 신호 발송
             bc.postMessage({

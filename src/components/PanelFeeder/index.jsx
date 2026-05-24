@@ -215,6 +215,7 @@ const PanelFeederContent = () => {
         removeFeeder,
         updateFeeder,
         reorderFeedersByHierarchy,
+        isLinkBroken,
         refreshLinkedLoads,
         settingsPF,
         settingsEff,
@@ -1612,6 +1613,7 @@ const PanelFeederContent = () => {
                                         handleDropdownKeyDown,
                                         handleFindAllTo,
                                         isDuplicateToId: (id) => displayFeeders.filter(f => f.toId === id).length > 1,
+                                        isLinkBroken,
                                         isMaterialMethodValid: feederChker.isMaterialMethodValid,
                                         toggleGroupCollapse
                                     };

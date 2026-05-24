@@ -326,6 +326,7 @@ const PanelLoadContent = () => {
 
         return {
             ...c,
+            connectedPanelId: connId,
             power: effectivePower,
             loads: effectiveLoads,
             phaseLine: effectivePhaseLine, // 실시간 상 위치 동기화
@@ -421,6 +422,7 @@ const PanelLoadContent = () => {
 
         targetCircuits.forEach(c => {
             const cleanNum = (val) => Number(String(val || '').replace(/,/g, '')) || 0;
+            const connId = c.connectedPanelId || c.loads?.find(l => l.category === 'PL')?.connectedPanelId;
             
             // 1. Raw Connected Power (설비용량)
             let rawPwr = cleanNum(c.power) || cleanNum(c.va) || cleanNum(c.apparentPower);
@@ -432,11 +434,12 @@ const PanelLoadContent = () => {
 
             // 2. Demanded Power (수용용량)
             let demPwr = rawPwr;
-            if (c.connectedPanelId) {
+            const validLoads = (c.loads || []).filter(l => l.category === 'PL' || (Number(l.qty) > 0 && Number(l.va) > 0));
+            if (connId) {
                 // PL 부하는 하위 panelsData 계산값 그대로 활용 (하단 sub 취합에서 반영)
-            } else if (c.loads && c.loads.length > 0) {
+            } else if (validLoads.length > 0) {
                 // 상세 부하별 개별 수용률 개별 반영
-                demPwr = c.loads.reduce((sum, l) => sum + ((Number(l.qty) || 0) * (Number(l.va) || 0) * ((l.demandFactor === undefined ? 100 : Number(l.demandFactor)) / 100)), 0);
+                demPwr = validLoads.reduce((sum, l) => sum + ((Number(l.qty) || 0) * (Number(l.va) || 0) * ((l.demandFactor === undefined ? 100 : Number(l.demandFactor)) / 100)), 0);
             } else {
                 // 직접 입력 회로 개별 수용률 반영
                 demPwr = rawPwr * ((c.demandFactor === undefined ? 100 : Number(c.demandFactor)) / 100);
@@ -459,8 +462,8 @@ const PanelLoadContent = () => {
                     rawL3 += rawPwr; rawI3 += rawCurr;
                 }
             } else {
-                if (c.connectedPanelId) {
-                    const sub = getAggregateTotals(c.connectedPanelId, visited);
+                if (connId) {
+                    const sub = getAggregateTotals(connId, visited);
                     if (p === 2) {
                         const totalSubPwr = sub.l1 + sub.l2 + sub.l3;
                         const totalSubCurr = totalSubPwr / 220;
@@ -928,11 +931,19 @@ const PanelLoadContent = () => {
                 setLeftCircuits(loadedLeft);
                 setRightCircuits(loadedRight);
 
-                // [SSOT Sync] 전역 스토어 즉시 동기화
+                // [SSOT Sync] 전역 스토어 즉시 동기화 (cachedPhaseTotals를 result로 전달)
+                const cachedTotalLoad = loadedInfo.cachedTotalLoad || 
+                    calculatePanelTotalLoad({ leftCircuits: loadedLeft, rightCircuits: loadedRight, projectInfo: loadedInfo });
                 useDataStore.getState().syncPanel(panelId, {
                     projectInfo: loadedInfo,
                     leftCircuits: loadedLeft,
                     rightCircuits: loadedRight
+                }, {
+                    totalLoad: cachedTotalLoad,
+                    phaseTotals: loadedInfo.cachedPhaseTotals || {
+                        l1: 0, l2: 0, l3: 0, i1: 0, i2: 0, i3: 0,
+                        rawL1: 0, rawL2: 0, rawL3: 0, rawI1: 0, rawI2: 0, rawI3: 0
+                    }
                 });
                 
                 // 최소 스켈레톤 노출 시간 보장 (600ms)
@@ -1131,12 +1142,45 @@ const PanelLoadContent = () => {
             }
         };
 
+        const handleConnectionsChanged = (e) => {
+            const { panelId: updatedId } = e.detail;
+            if (updatedId === panelId) {
+                const storeState = useDataStore.getState().panels[panelId];
+                if (storeState && storeState.projectInfo) {
+                    console.log(`[PanelLoad Reactive Sync] Hydrating parent panel from store: ${panelId}`);
+                    
+                    setProjectInfo(storeState.projectInfo);
+                    if (storeState.projectInfo.panelName) {
+                        setEditingPanelName(storeState.projectInfo.panelName);
+                    }
+                    if (storeState.leftCircuits) {
+                        setLeftCircuits(storeState.leftCircuits);
+                    }
+                    if (storeState.rightCircuits) {
+                        setRightCircuits(storeState.rightCircuits);
+                    }
+                    
+                    // [STRICT GUARD] 외부 브로드캐스트 Hydration 완료 후:
+                    // 1) guard string 갱신으로 "변경된 게 없음"을 선언
+                    // 2) isLocalChangeRef = false 로 자동 저장 루프 원천 차단
+                    lastSavedDataRef.current = getCoreDataString(
+                        storeState.projectInfo,
+                        storeState.leftCircuits || [],
+                        storeState.rightCircuits || []
+                    );
+                    isLocalChangeRef.current = false; // [AUTO-SAVE GUARD] 타 탭 수신 시 서버 저장 API 낭비 차단
+                }
+            }
+        };
+
         window.addEventListener('kelc_panel_name_updated', handlePanelNameUpdate);
         window.addEventListener('kelc_project_info_updated', handleProjectUpdate);
+        window.addEventListener('kelc_connections_changed', handleConnectionsChanged);
 
         return () => {
             window.removeEventListener('kelc_panel_name_updated', handlePanelNameUpdate);
             window.removeEventListener('kelc_project_info_updated', handleProjectUpdate);
+            window.removeEventListener('kelc_connections_changed', handleConnectionsChanged);
         };
     }, [panelId, projectId, isDataLoaded, syncPLCircuits]);
 
@@ -1240,8 +1284,10 @@ const PanelLoadContent = () => {
 
                 let rawPwr = Number(c.power) || Number(c.va) || 0;
 
-                if (c.loads && c.loads.length > 0) {
-                    c.loads.forEach(l => {
+                const validLoads = (c.loads || []).filter(l => Number(l.qty) > 0 && Number(l.va) > 0);
+
+                if (validLoads.length > 0) {
+                    validLoads.forEach(l => {
                         if (l.category === 'PL') return;
                         const qty = Number(l.qty) || 0;
                         const va = Number(l.va) || 0;
@@ -2037,6 +2083,34 @@ const PanelLoadContent = () => {
         return () => clearTimeout(timer);
     }, [panelId, isDataLoaded, projectInfo, leftCircuits, rightCircuits, totalLoad, phaseTotals, syncPanel]);
 
+    // [CRITICAL FIX] Post-Hydration Result Registration
+    // 하이드레이션 완료 후, isLocalChangeRef와 무관하게 계산 결과를 전역 results 스토어에 등록.
+    // 부모 계산서가 results[childId].phaseTotals를 참조할 수 있도록 보장.
+    // 브로드캐스트 없이 로컬 스토어만 업데이트하여 에코 루프를 원천 차단.
+    useEffect(() => {
+        if (!panelId || !isDataLoaded) return;
+        
+        const currentResult = useDataStore.getState().results[panelId];
+        
+        // [Guard] 현재 스토어의 결과와 비교하여 실제 변경이 있을 때만 업데이트
+        if (currentResult?.totalLoad === totalLoad && 
+            JSON.stringify(currentResult?.phaseTotals) === JSON.stringify(phaseTotals)) {
+            return;
+        }
+        
+        // [Local-Only] 브로드캐스트 없이 로컬 스토어만 업데이트
+        useDataStore.setState(state => ({
+            results: {
+                ...state.results,
+                [panelId]: {
+                    ...(state.results[panelId] || {}),
+                    totalLoad,
+                    phaseTotals
+                }
+            }
+        }));
+    }, [panelId, isDataLoaded, totalLoad, phaseTotals]);
+
     if (isHydrating) {
         return (
             <div className="min-h-screen bg-black text-gray-400 p-2 sm:p-4 lg:p-6 flex flex-col gap-4 overflow-hidden">
@@ -2198,6 +2272,8 @@ const PanelLoadContent = () => {
                 />
 
                 <ActionModals
+                    panelsData={panelsData}
+                    results={results}
                     contextMenu={contextMenu}
                     closeContextMenu={closeContextMenu}
                     handleCopy={handleCopy}

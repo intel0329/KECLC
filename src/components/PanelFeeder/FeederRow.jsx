@@ -179,9 +179,11 @@ const FeederRow = memo(({
                     onKeyDown={handleDropdownKeyDown}
                     placeholder="TO"
                     className={`font-bold text-[13px] ${
-                        handlers.isDuplicateToId(feeder.toId)
-                            ? '!text-red-500'
-                            : '!text-yellow-400'
+                        handlers.isLinkBroken(feeder.toId, feeder.fromId)
+                            ? '!text-red-500 font-bold underline'
+                            : handlers.isDuplicateToId(feeder.toId)
+                                ? '!text-red-500'
+                                : '!text-yellow-400'
                     }`}
                     debounceDelay={300}
                 />

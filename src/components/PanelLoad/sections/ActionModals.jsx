@@ -42,7 +42,9 @@ export const ActionModals = (props) => {
         saveLoads,
         getModalTotalVA,
         getNameById,
-        setLoadModal // [NEW] 엑셀 임포트 결과 반영을 위한 세터
+        setLoadModal, // [NEW] 엑셀 임포트 결과 반영을 위한 세터
+        panelsData,
+        results
     } = props;
 
     return (
@@ -482,35 +484,55 @@ export const ActionModals = (props) => {
                                                 />
                                             </div>
                                             {/* Demand Factor Input */}
-                                            <div>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="100"
-                                                    value={load.demandFactor !== undefined ? load.demandFactor : 100}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value === '' ? '' : Math.max(0, Math.min(100, Number(e.target.value)));
-                                                        updateModalLoad(index, 'demandFactor', val);
-                                                    }}
-                                                    disabled={load.category === 'PL'}
-                                                    onKeyDown={(e) => e.key === 'Enter' && saveLoads()}
-                                                    className={`w-full bg-zinc-900/60 border border-zinc-800/80 hover:border-zinc-700 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 text-center rounded-md font-normal px-1.5 py-1.5 text-[12px] outline-none pl-3.5 transition-all duration-200 spinner-visible ${load.category === 'PL' ? 'opacity-50 cursor-not-allowed' : ''} ${
-                                                        (load.demandFactor === undefined || load.demandFactor === '' || Number(load.demandFactor) === 100) ? 'text-white' : 'text-emerald-400'
-                                                    }`}
-                                                    placeholder=""
-                                                 />
-                                             </div>
+                                            {(() => {
+                                                const childDf = (load.category === 'PL' && load.connectedPanelId && panelsData)
+                                                    ? (panelsData[load.connectedPanelId]?.projectInfo?.demandFactor !== undefined
+                                                        ? Number(panelsData[load.connectedPanelId]?.projectInfo?.demandFactor)
+                                                        : 100)
+                                                    : (load.demandFactor !== undefined ? load.demandFactor : 100);
+
+                                                return (
+                                                    <div>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="100"
+                                                            value={childDf}
+                                                            onChange={(e) => {
+                                                                const val = e.target.value === '' ? '' : Math.max(0, Math.min(100, Number(e.target.value)));
+                                                                updateModalLoad(index, 'demandFactor', val);
+                                                            }}
+                                                            disabled={load.category === 'PL'}
+                                                            onKeyDown={(e) => e.key === 'Enter' && saveLoads()}
+                                                            className={`w-full bg-zinc-900/60 border border-zinc-800/80 hover:border-zinc-700 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 text-center rounded-md font-normal px-1.5 py-1.5 text-[12px] outline-none pl-3.5 transition-all duration-200 spinner-visible ${load.category === 'PL' ? 'opacity-50 cursor-not-allowed font-bold !text-emerald-400' : ''} ${
+                                                                (childDf === undefined || childDf === '' || Number(childDf) === 100) ? 'text-white' : 'text-emerald-400'
+                                                            }`}
+                                                            placeholder=""
+                                                        />
+                                                    </div>
+                                                );
+                                            })()}
                                             {/* Row Total */}
-                                            <div className="text-right flex flex-col items-end justify-center pr-2">
-                                                <span className="text-yellow-400 font-bold text-[12px]">
-                                                    {((Number(load.qty) || 0) * (Number(load.va) || 0)).toLocaleString()}
-                                                </span>
-                                                {load.category !== 'PL' && load.demandFactor !== undefined && Number(load.demandFactor) !== 100 && (
-                                                    <span className="text-emerald-400 text-[11px] font-bold mt-0.5">
-                                                        {Math.round((Number(load.qty) || 0) * (Number(load.va) || 0) * (Number(load.demandFactor) / 100)).toLocaleString()}
-                                                    </span>
-                                                )}
-                                            </div>
+                                            {(() => {
+                                                const childDf = (load.category === 'PL' && load.connectedPanelId && panelsData)
+                                                    ? (panelsData[load.connectedPanelId]?.projectInfo?.demandFactor !== undefined
+                                                        ? Number(panelsData[load.connectedPanelId]?.projectInfo?.demandFactor)
+                                                        : 100)
+                                                    : (load.demandFactor !== undefined ? load.demandFactor : 100);
+
+                                                return (
+                                                    <div className="text-right flex flex-col items-end justify-center pr-2">
+                                                        <span className="text-yellow-400 font-bold text-[12px]">
+                                                            {((Number(load.qty) || 0) * (Number(load.va) || 0)).toLocaleString()}
+                                                        </span>
+                                                        {Number(childDf) !== 100 && (
+                                                            <span className="text-emerald-400 text-[11px] font-bold mt-0.5">
+                                                                {Math.round((Number(load.qty) || 0) * (Number(load.va) || 0) * (Number(childDf) / 100)).toLocaleString()}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     ))}
                                 </div>

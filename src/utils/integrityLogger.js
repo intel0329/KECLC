@@ -94,7 +94,7 @@ export const logIntegrityEvent = (level, action, message, detail = null) => {
 /**
  * 부모 회로(connectedPanelId)에서 유효한 자식 계산서 ID를 판정하기 위한 검증 필터 (Prefix Wildcard 지원)
  */
-const VALID_CHILD_PREFIXES = ['panel-load-', 'ups-', 'power-load-'];
+const VALID_CHILD_PREFIXES = ['panel-load-', 'ups-', 'power-load-', 'lp-', 'mcc-'];
 const isValidChildId = (id) => {
     if (!id) return false;
     const idStr = String(id).trim();
@@ -383,6 +383,53 @@ export const clearIntegrityLogs = () => {
         localStorage.removeItem(LOG_KEY);
         logIntegrityEvent('INFO', 'CHECK', '무결성 진단 로그를 성공적으로 지웠습니다.');
     } catch (e) { }
+};
+
+/**
+ * 특정 ID의 무결성 로그 하나만 지우기
+ * @param {string} logId 
+ */
+export const deleteIntegrityLog = (logId) => {
+    try {
+        const raw = localStorage.getItem(LOG_KEY);
+        if (!raw) return;
+        let logs = JSON.parse(raw);
+        if (!Array.isArray(logs)) return;
+        
+        const filteredLogs = logs.filter(log => String(log.id) !== String(logId));
+        localStorage.setItem(LOG_KEY, JSON.stringify(filteredLogs));
+        
+        window.dispatchEvent(new CustomEvent('kelc_integrity_logs_changed'));
+    } catch (e) {
+        console.error('[IntegrityLogger] Failed to delete integrity log:', e);
+    }
+};
+
+/**
+ * 특정 패널과 관련된 무결성 로그만 지우기
+ * @param {string} panelId 
+ */
+export const clearIntegrityLogsForPanel = (panelId) => {
+    try {
+        const raw = localStorage.getItem(LOG_KEY);
+        if (!raw) return;
+        let logs = JSON.parse(raw);
+        if (!Array.isArray(logs)) return;
+        
+        // 해당 패널 ID와 연관이 없는 로그들만 남김 (필터링)
+        const filteredLogs = logs.filter(log => {
+            if (!log.detail) return true;
+            const currentPanelId = log.detail.panelId || log.detail.childId || log.detail.parentId;
+            return String(currentPanelId).trim() !== String(panelId).trim();
+        });
+        
+        localStorage.setItem(LOG_KEY, JSON.stringify(filteredLogs));
+        
+        // 지운 후 알림용 로그 추가
+        logIntegrityEvent('INFO', 'CHECK', '현재 계산서 탭 관련 무결성 로그를 성공적으로 지웠습니다.');
+    } catch (e) {
+        console.error('[IntegrityLogger] Failed to clear logs for panel:', e);
+    }
 };
 
 /**

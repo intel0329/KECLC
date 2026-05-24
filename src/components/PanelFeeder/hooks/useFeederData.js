@@ -496,10 +496,52 @@ export const useFeederData = (projectId, panelId, getParentId, lookupLoaded, get
     };
 
     /**
+     * 개별 피더 행의 양방향 연결 정합성(Handshake)을 검증합니다.
+     */
+    const isLinkBroken = useCallback((toId, fromId) => {
+        if (!toId) return false; // 수동 입력 행 패스
+
+        // 1. 고아 참조 검증: 메모리 캐시(panels)가 아닌, 전체 족보(idToName) 기반 검증
+        if (!idToName[toId]) return true;
+
+        // 2. 역방향 소실 검증: 비동기 데이터가 아닌 getParentId 족보 함수 사용
+        const actualParentId = getParentId(toId);
+        
+        // [CRITICAL] panelId가 아닌, 해당 행의 진짜 부모인 'fromId'와 비교!!
+        if (fromId && String(actualParentId).trim() !== String(fromId).trim()) {
+            return true; 
+        }
+        
+        return false;
+    }, [idToName, getParentId]); // 💡 의존성 배열에서 panelId와 panels를 완벽히 제거할 것
+
+    /**
+     * 동기식 초고속 양방향 단선 검증(Strict Gatekeeper) 헬퍼 함수
+     */
+    const validateLinksHandshake = useCallback(() => {
+        for (const feeder of feeders) {
+            if (feeder.rowType) continue;
+            if (isLinkBroken(feeder.toId, feeder.fromId)) {
+                return feeder; // 단선이 발견된 첫 번째 피더 행 반환
+            }
+        }
+        return null;
+    }, [feeders, isLinkBroken]);
+
+    /**
      * 에너지 플로우의 계통 구조를 분석하여 간선계산서 행을 자동으로 재배치 및 동기화합니다.
      */
     const reorderFeedersByHierarchy = useCallback(() => {
         if (!lookupLoaded || !isDataLoaded) return;
+
+        // 초고속 양방향 단선 검증 엔진 실행 (Strict Gatekeeper)
+        const brokenFeeder = validateLinksHandshake();
+        if (brokenFeeder) {
+            const getNameById = (id) => idToName[id] || id;
+            const brokenName = getNameById(brokenFeeder.toId) || brokenFeeder.toId;
+            alert(`[경고] 끊어진 회로가 발견되었습니다. 계통 동기화를 진행하기 전에 아래 회로의 연결 상태를 확인하십시오. (예: '${brokenName}' 회로 연결 유실)`);
+            return; // 하드 스톱 (정렬 진행 차단)
+        }
         
         const getNameById = (id) => idToName[id] || id;
         const reordered = updateGroupFooters(
@@ -508,7 +550,7 @@ export const useFeederData = (projectId, panelId, getParentId, lookupLoaded, get
         );
         
         setFeeders(reordered);
-    }, [feeders, panels, panelParents, idToName, lookupLoaded, isDataLoaded]);
+    }, [feeders, panels, panelParents, idToName, lookupLoaded, isDataLoaded, validateLinksHandshake]);
 
     const refreshLinkedLoads = useCallback(() => {
         if (!isDataLoaded || feeders.length === 0) return;
@@ -549,6 +591,7 @@ export const useFeederData = (projectId, panelId, getParentId, lookupLoaded, get
         },
         updateFeeder,
         reorderFeedersByHierarchy,
+        isLinkBroken,
         refreshLinkedLoads,
         hasChanges: true,
         settingsPF,

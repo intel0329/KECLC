@@ -237,10 +237,12 @@ export const useGraphData = () => {
                     normalizedVA = calculatePanelTotalLoad(pData) || info.cachedTotalLoad || 0;
                 }
 
-                // 수용률(Demand Factor)에 의한 이중 연산 방지: capacity와 totalIb를 원시(Raw) 값으로 보정
+                // 수용률(Demand Factor)을 반영한 수용부하 및 총부하(Capacity) 정상화 계산
                 const dfRatio = (Number(demandFactor) || 100) / 100;
-                const rawVA = dfRatio > 0 ? normalizedVA / dfRatio : normalizedVA;
+                const rawVA = normalizedVA; // 스토어의 totalLoad 결과가 순수 총부하(Raw)입니다.
                 capacity = rawVA / 1000;
+
+                const demandVA = normalizedVA * dfRatio; // 수용부하는 총부하에 수용률을 곱하여 계산합니다.
 
                 // --- 전류(Ib) 산출 로직 (게이지용) ---
                 const vStr = String(info.voltage || '380V');
@@ -249,11 +251,11 @@ export const useGraphData = () => {
                 const K = cleanPh.includes('1Φ') ? 1 : Math.sqrt(3);
 
                 totalIb = rawVA / (v * K);
-                demandIb = normalizedVA / (v * K);
+                demandIb = demandVA / (v * K);
 
                 // 개별 노드 전력 데이터 저장 (합산용)
                 nodeTotalLoads[panel.id] = capacity;
-                nodeDemandLoads[panel.id] = normalizedVA / 1000;
+                nodeDemandLoads[panel.id] = demandVA / 1000;
 
                 if (isTransformer) {
                     phase = "3P4W (Main)";
@@ -413,6 +415,11 @@ export const useGraphData = () => {
                 node.data.calculatedTotalLoad = totalChildLoad;
                 node.data.calculatedDemandLoad = totalChildDemandLoad;
                 node.data.aggregatedDemandFactor = totalChildLoad > 0 ? (totalChildDemandLoad / totalChildLoad) * 100 : 100;
+
+                // [CRITICAL FIX] 합산된 을지 변압기의 최종 값을 nodeTotalLoads와 nodeDemandLoads에 주입하여
+                // 상위 갑지-노드(HV)가 을지-노드의 최종 합산 결과를 읽어갈 수 있도록 보장합니다.
+                nodeTotalLoads[node.id] = totalChildLoad;
+                nodeDemandLoads[node.id] = totalChildDemandLoad;
             }
         });
 
@@ -428,13 +435,16 @@ export const useGraphData = () => {
                 position: { x: 0, y: 0 }
             });
 
-            const hvAggregatedTotalLoad = transformerRoots.reduce((sum, p) => {
-                const node = nodesList.find(n => n.id === p.id);
-                return sum + (node?.data?.calculatedTotalLoad || 0);
+            // [CRITICAL FIX] 갑지 계산서가 활성화(hasHvSheet === true)되어 있을 때,
+            // 실제 갑지에 등록되어 연결선이 그려지는 을지 변압기들만 합산 대상으로 필터링합니다.
+            // 등록되지 않은 을지 변압기까지 부하량에 더해져 수치가 불일치하는 현상을 완벽히 방지합니다.
+            const connectedTrs = transformerRoots.filter(p => !hasHvSheet || registeredTrIds.has(p.id));
+
+            const hvAggregatedTotalLoad = connectedTrs.reduce((sum, p) => {
+                return sum + (nodeTotalLoads[p.id] || 0);
             }, 0);
-            const hvAggregatedDemandLoad = transformerRoots.reduce((sum, p) => {
-                const node = nodesList.find(n => n.id === p.id);
-                return sum + (node?.data?.calculatedDemandLoad || 0);
+            const hvAggregatedDemandLoad = connectedTrs.reduce((sum, p) => {
+                return sum + (nodeDemandLoads[p.id] || 0);
             }, 0);
 
             nodesList.push({
@@ -513,8 +523,8 @@ export const useGraphData = () => {
             if (generatorData) {
                 const info = generatorData.projectInfo || {};
                 genCapacity = Number(generatorResult?.totalCapacity || info.mainCapacity || info.generatorCapacity || 0);
-                genTotalLoad = Number(generatorResult?.totalLoad || info.cachedTotalLoad || 0);
-                genDemandLoad = Number(generatorResult?.demandLoad || (info.cachedTotalLoad * (info.demandFactor || 100) / 100) || 0);
+                genTotalLoad = Number(generatorResult?.totalLoad || info.cachedTotalLoad || 0) / 1000;
+                genDemandLoad = Number(generatorResult?.demandLoad || (info.cachedTotalLoad * (info.demandFactor || 100) / 100) || 0) / 1000;
                 genLocation = info.location || 'EMERGENCY POWER SYSTEM';
             }
 

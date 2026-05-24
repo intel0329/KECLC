@@ -1,17 +1,58 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
     getIntegrityLogs, 
     clearIntegrityLogs, 
     formatLogsToText, 
-    logIntegrityEvent 
+    logIntegrityEvent,
+    deleteIntegrityLog,
+    clearIntegrityLogsForPanel
 } from '../../utils/integrityLogger';
+
+const RADAR_STORAGE_KEY = 'kelc_radar_packets';
+const MAX_RADAR_LOGS = 10;
+
+/** localStorage에서 Radar 패킷 로그를 읽어옵니다 */
+const getRadarLogs = () => {
+    try {
+        const raw = localStorage.getItem(RADAR_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+};
+
+/** Radar 패킷 로그를 localStorage에 저장합니다 */
+const saveRadarLogs = (logs) => {
+    try {
+        localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(logs));
+    } catch (e) { }
+};
 
 const BroadcastRadar = () => {
     const [devMode, setDevMode] = useState(false);
-    const [logs, setLogs] = useState([]);
+    // 새로고침 내성: 초기값을 localStorage에서 복원
+    const [logs, setLogs] = useState(() => getRadarLogs());
     const [activeTab, setActiveTab] = useState('radar'); // 'radar' | 'integrity'
     const [integrityLogs, setIntegrityLogs] = useState([]);
     const [showConfirm, setShowConfirm] = useState(false);
+    const [showRadarConfirm, setShowRadarConfirm] = useState(false);
+    
+    const location = useLocation();
+    
+    // 현재 경로(/project/:projectId/:type/:panelId)에서 panelId 추출
+    const getActivePanelId = () => {
+        const parts = location.pathname.split('/');
+        if (parts.length >= 5 && parts[1] === 'project') {
+            return parts[4]; // panelId
+        }
+        return null;
+    };
+    const activePanelId = getActivePanelId();
+    
+    const [confirmType, setConfirmType] = useState('clear'); // 'clear' | 'all'
     
     // 렌더링용 React 상태 (Zustand와 충돌 없는 순수 드로잉 데이터)
     const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -86,8 +127,19 @@ const BroadcastRadar = () => {
         }
     };
 
-    // 로그 지우기 핸들러
-    const handleClearLogs = () => {
+    // 'CLEAR' 버튼 핸들러 (현재 계산서 탭 전용)
+    const handleClearLogsForPanel = () => {
+        if (!activePanelId) {
+            alert('현재 활성화된 계산서 탭을 찾을 수 없습니다.');
+            return;
+        }
+        setConfirmType('clear');
+        setShowConfirm(true);
+    };
+
+    // 'ALL' 버튼 핸들러 (전체 무결성 로그 리셋)
+    const handleClearAllLogs = () => {
+        setConfirmType('all');
         setShowConfirm(true);
     };
 
@@ -117,10 +169,11 @@ const BroadcastRadar = () => {
 
             setLogs((prev) => {
                 const updated = [...prev, newLog];
-                if (updated.length > 10) {
-                    updated.shift();
-                }
-                return updated;
+                // FIFO 버퍼 유지
+                const trimmed = updated.length > MAX_RADAR_LOGS ? updated.slice(updated.length - MAX_RADAR_LOGS) : updated;
+                // [새로고침 내성] localStorage에 즉시 영구 저장
+                saveRadarLogs(trimmed);
+                return trimmed;
             });
         };
 
@@ -166,6 +219,9 @@ const BroadcastRadar = () => {
         const handleStorageChange = (e) => {
             if (e.key === 'KECLC_DEV_MODE') {
                 checkDevMode();
+            }
+            if (e.key === 'kelc_integrity_logs') {
+                setIntegrityLogs(getIntegrityLogs());
             }
         };
 
@@ -256,37 +312,49 @@ const BroadcastRadar = () => {
             {/* 액티브 탭 뷰 렌더러 */}
             {activeTab === 'radar' ? (
                 /* ── RADAR PACKETS 탭 ── */
-                <div className="flex-grow overflow-y-auto space-y-1.5 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent select-text">
-                    {logs.length === 0 ? (
-                        <div className="text-gray-500 text-center py-4 italic select-none">No packets captured yet.</div>
-                    ) : (
-                        logs.map((log) => {
-                            const isTX = log.type === 'TX';
-                            const isWARN = log.type === 'WARN';
-                            
-                            let colorClass = 'text-fuchsia-400';
-                            if (isTX) colorClass = 'text-sky-400';
-                            if (isWARN) colorClass = 'text-yellow-500';
+                <div className="flex flex-col flex-grow overflow-hidden">
+                    {/* RADAR Clear 버튼 */}
+                    <div className="flex justify-end mb-2 shrink-0">
+                        <button
+                            onClick={() => setShowRadarConfirm(true)}
+                            className="py-1 px-2.5 rounded-md bg-sky-950/60 hover:bg-sky-900 border border-sky-500/20 active:bg-sky-950 text-sky-400 hover:text-sky-300 transition-all duration-150 cursor-pointer text-[10px]"
+                            title="RADAR 패킷 로그 전체 초기화"
+                        >
+                            Clear Packets
+                        </button>
+                    </div>
+                    <div className="flex-grow overflow-y-auto space-y-1.5 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent select-text">
+                        {logs.length === 0 ? (
+                            <div className="text-gray-500 text-center py-4 italic select-none">No packets captured yet.</div>
+                        ) : (
+                            logs.map((log) => {
+                                const isTX = log.type === 'TX';
+                                const isWARN = log.type === 'WARN';
+                                
+                                let colorClass = 'text-fuchsia-400';
+                                if (isTX) colorClass = 'text-sky-400';
+                                if (isWARN) colorClass = 'text-yellow-500';
 
-                            return (
-                                <div key={log.id} className="border-b border-white/5 pb-1 flex flex-col gap-0.5 select-text">
-                                    <div className="flex items-center justify-between select-none">
-                                        <span className={`font-bold ${colorClass}`}>
-                                            [{log.type}] {log.action}
-                                        </span>
-                                        <span className="text-[10px] text-gray-500">{log.time}</span>
+                                return (
+                                    <div key={log.id} className="border-b border-white/5 pb-1 flex flex-col gap-0.5 select-text">
+                                        <div className="flex items-center justify-between select-none">
+                                            <span className={`font-bold ${colorClass}`}>
+                                                [{log.type}] {log.action}
+                                            </span>
+                                            <span className="text-[10px] text-gray-500">{log.time}</span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-400 flex items-center justify-between pl-2 font-mono">
+                                            <span className="truncate max-w-[170px]">
+                                                Panel: {typeof log.panelId === 'string' ? log.panelId.slice(-6) : String(log.panelId || '-')}
+                                            </span>
+                                            <span>Sid: {log.senderId}</span>
+                                        </div>
                                     </div>
-                                    <div className="text-[10px] text-gray-400 flex items-center justify-between pl-2 font-mono">
-                                        <span className="truncate max-w-[170px]">
-                                            Panel: {typeof log.panelId === 'string' ? log.panelId.slice(-6) : String(log.panelId || '-')}
-                                        </span>
-                                        <span>Sid: {log.senderId}</span>
-                                    </div>
-                                </div>
-                            );
-                        })
-                    )}
-                    <div ref={logsEndRef} />
+                                );
+                            })
+                        )}
+                        <div ref={logsEndRef} />
+                    </div>
                 </div>
             ) : (
                 /* ── INTEGRITY LOGS 탭 ── */
@@ -297,14 +365,22 @@ const BroadcastRadar = () => {
                             onClick={handleExportLogs}
                             className="flex-grow py-1.5 px-2 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold transition-all duration-150 cursor-pointer text-center text-[10px] shadow-sm hover:shadow-md"
                         >
-                            📥 Export Logs (TXT)
+                            📥 EXPORT LOGS
                         </button>
                         <button
-                            onClick={handleClearLogs}
-                            className="py-1.5 px-2.5 rounded-md bg-red-950/60 hover:bg-red-900 border border-red-500/20 active:bg-red-950 text-red-400 hover:text-red-300 transition-all duration-150 cursor-pointer text-[10px]"
-                            title="모든 로그 완전 리셋"
+                            onClick={handleClearLogsForPanel}
+                            className={`py-1.5 px-2.5 rounded-md bg-red-950/60 hover:bg-red-900 border border-red-500/20 active:bg-red-950 text-red-400 hover:text-red-300 transition-all duration-150 cursor-pointer text-[10px] ${!activePanelId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="현재 계산서 탭 전용 로그 삭제"
+                            disabled={!activePanelId}
                         >
-                            Clear
+                            CLEAR
+                        </button>
+                        <button
+                            onClick={handleClearAllLogs}
+                            className="py-1.5 px-2.5 rounded-md bg-red-800 hover:bg-red-700 active:bg-red-900 text-white font-bold transition-all duration-150 cursor-pointer text-[10px] shadow-sm hover:shadow-md"
+                            title="모든 무결성 로그 전체 삭제"
+                        >
+                            ALL
                         </button>
                     </div>
 
@@ -328,13 +404,21 @@ const BroadcastRadar = () => {
                                 }
 
                                 return (
-                                    <div key={log.id} className={`pl-2.5 pb-1.5 border-b border-white/5 flex flex-col gap-1 ${borderClass}`}>
-                                        <div className="flex items-center justify-between select-none">
+                                    <div key={log.id} className={`pl-2.5 pb-1.5 border-b border-white/5 flex flex-col gap-1 relative ${borderClass}`}>
+                                        <div className="flex items-center justify-between select-none pr-6">
                                             <span className={`${labelColor}`}>
                                                 [{log.level}] {log.action}
                                             </span>
                                             <span className="text-[10px] text-gray-500">{log.timeString}</span>
                                         </div>
+                                        {/* 개별 삭제 버튼 */}
+                                        <button
+                                            onClick={() => deleteIntegrityLog(log.id)}
+                                            className="absolute top-1.5 right-2 text-gray-500 hover:text-red-400 active:text-red-600 transition-colors p-0.5 cursor-pointer text-[12px] font-bold"
+                                            title="이 로그 항목만 지우기"
+                                        >
+                                            ✕
+                                        </button>
                                         <div className="text-[11.5px] text-gray-300 leading-normal pl-1.5 select-text">
                                             {log.message}
                                         </div>
@@ -352,19 +436,28 @@ const BroadcastRadar = () => {
                 </div>
             )}
 
-            {/* 다크 글래스모피즘 커스텀 Confirm 모달 레이어 */}
+            {/* [Integrity] 다크 글래스모피즘 커스텀 Confirm 모달 레이어 */}
             {showConfirm && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md rounded-xl p-6 z-[10020] border border-white/10 select-none transition-all duration-300">
-                    <div className="flex items-center gap-2 mb-3 text-red-400 font-bold text-[12px]">
+                    <div className={`flex items-center gap-2 mb-3 ${confirmType === 'clear' ? 'text-yellow-500' : 'text-red-400'} font-bold text-[12px]`}>
                         <span className="relative flex h-2.5 w-2.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${confirmType === 'clear' ? 'bg-yellow-500' : 'bg-red-400'} opacity-75`}></span>
+                            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${confirmType === 'clear' ? 'bg-yellow-600' : 'bg-red-500'}`}></span>
                         </span>
-                        <span>WARNING: CLEAR LOGS</span>
+                        <span>{confirmType === 'clear' ? 'WARNING: CLEAR TAB LOGS' : 'WARNING: CLEAR ALL LOGS'}</span>
                     </div>
                     <p className="text-gray-300 text-[12px] leading-relaxed text-center mb-5 font-medium px-2">
-                        모든 지속성 무결성 로그를<br />
-                        영구적으로 삭제하시겠습니까?
+                        {confirmType === 'clear' ? (
+                            <>
+                                현재 활성화된 계산서 탭 관련<br />
+                                무결성 로그만 삭제하시겠습니까?
+                            </>
+                        ) : (
+                            <>
+                                모든 지속성 무결성 로그를<br />
+                                영구적으로 완전 삭제하시겠습니까?
+                            </>
+                        )}
                     </p>
                     <div className="flex gap-2.5 w-full max-w-[200px]">
                         <button
@@ -375,10 +468,49 @@ const BroadcastRadar = () => {
                         </button>
                         <button
                             onClick={() => {
-                                clearIntegrityLogs();
+                                if (confirmType === 'clear') {
+                                    clearIntegrityLogsForPanel(activePanelId);
+                                } else {
+                                    clearIntegrityLogs();
+                                }
                                 setShowConfirm(false);
                             }}
-                            className="flex-1 py-1.5 rounded bg-red-700 hover:bg-red-600 active:bg-red-800 text-white font-bold transition-all duration-150 cursor-pointer text-center text-[10px] shadow-md shadow-red-950/50"
+                            className={`flex-1 py-1.5 rounded ${confirmType === 'clear' ? 'bg-yellow-700 hover:bg-yellow-600 active:bg-yellow-800 shadow-yellow-950/50' : 'bg-red-700 hover:bg-red-600 active:bg-red-800 shadow-red-950/50'} text-white font-bold transition-all duration-150 cursor-pointer text-center text-[10px] shadow-md`}
+                        >
+                            삭제 확정
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* [Radar] RADAR 패킷 Clear Confirm 모달 레이어 */}
+            {showRadarConfirm && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md rounded-xl p-6 z-[10020] border border-white/10 select-none transition-all duration-300">
+                    <div className="flex items-center gap-2 mb-3 text-sky-400 font-bold text-[12px]">
+                        <span className="relative flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-sky-500"></span>
+                        </span>
+                        <span>CLEAR RADAR PACKETS</span>
+                    </div>
+                    <p className="text-gray-300 text-[12px] leading-relaxed text-center mb-5 font-medium px-2">
+                        저장된 RADAR 패킷 로그를<br />
+                        모두 지우시겠습니까?
+                    </p>
+                    <div className="flex gap-2.5 w-full max-w-[200px]">
+                        <button
+                            onClick={() => setShowRadarConfirm(false)}
+                            className="flex-1 py-1.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 active:bg-white/5 text-gray-300 font-bold transition-all duration-150 cursor-pointer text-center text-[10px]"
+                        >
+                            취소
+                        </button>
+                        <button
+                            onClick={() => {
+                                localStorage.removeItem(RADAR_STORAGE_KEY);
+                                setLogs([]);
+                                setShowRadarConfirm(false);
+                            }}
+                            className="flex-1 py-1.5 rounded bg-sky-700 hover:bg-sky-600 active:bg-sky-800 text-white font-bold transition-all duration-150 cursor-pointer text-center text-[10px] shadow-md shadow-sky-950/50"
                         >
                             삭제 확정
                         </button>

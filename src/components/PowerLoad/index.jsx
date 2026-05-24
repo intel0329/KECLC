@@ -1792,8 +1792,35 @@ const PowerLoadContent = () => {
 
     // [CONNECTION SYNC] 다른 탭에서 연결 변경 시 SOURCE 재동기화 강제 트리거
     useEffect(() => {
-        const handleConnectionsChanged = () => {
+        const handleConnectionsChanged = (e) => {
             if (!lookupLoaded || !isDataLoaded || !panelId) return;
+
+            // 만약 나 자신(부모)의 연결 정보가 변경된 거라면 (자식 삭제 등의 이유로)
+            if (e && e.detail && e.detail.panelId === panelId) {
+                const storeData = useDataStore.getState().panels[panelId];
+                if (storeData) {
+                    console.log(`[PowerLoad Reactive Sync] Hydrating parent panel from store: ${panelId}`);
+                    if (storeData.projectInfo) {
+                        setProjectInfo(prev => ({ ...prev, ...storeData.projectInfo }));
+                        if (storeData.projectInfo.panelName) {
+                            setEditingPanelName(storeData.projectInfo.panelName);
+                        }
+                    }
+                    if (storeData.powerLoads) {
+                        setPowerLoads(storeData.powerLoads);
+                    }
+                    // [STRICT GUARD] 외부 브로드캐스트 Hydration 완료 후:
+                    // 1) guard string 갱신으로 "변경된 게 없음"을 선언
+                    // 2) isLocalChangeRef = false 로 자동 저장 루프 원천 차단
+                    lastSavedDataRef.current = getCoreDataString(
+                        storeData.projectInfo || projectInfo,
+                        storeData.powerLoads || powerLoads
+                    );
+                    isLocalChangeRef.current = false; // [AUTO-SAVE GUARD] 타 탭 수신 시 서버 저장 API 낭비 차단
+                }
+                return;
+            }
+
             // usePanelLookup이 loadData()를 호출하여 갱신된 후,
             // 약간의 지연을 두고 SOURCE를 재검증합니다.
             setTimeout(() => {
